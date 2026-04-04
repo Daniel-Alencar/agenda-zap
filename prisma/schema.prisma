@@ -1,0 +1,133 @@
+// =============================================
+// ESQUEMA DO BANCO DE DADOS - MICRO-SAAS DE AGENDAMENTO
+// =============================================
+// Este arquivo define a estrutura do banco de dados PostgreSQL
+// usando Prisma ORM. Execute `npx prisma migrate dev` para aplicar.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================
+// MODEL: USER (Lojista/Dono do Negócio)
+// =============================================
+// Representa o usuário que possui o negócio e gerencia agendamentos.
+// O campo `username` é único e usado na URL pública de agendamento.
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   // Hash da senha (usar bcrypt)
+  name      String
+  username  String   @unique // URL pública: /username/book
+  phone     String?  // WhatsApp do lojista
+  
+  // Configuração da Evolution API
+  evolutionInstanceName String? // Nome da instância no Evolution API
+  evolutionConnected    Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  services     Service[]
+  appointments Appointment[]
+  customers    Customer[]
+}
+
+// =============================================
+// MODEL: SERVICE (Serviços Oferecidos)
+// =============================================
+// Representa os serviços que o lojista oferece.
+// Cada serviço tem um preço e duração em minutos.
+
+model Service {
+  id          String   @id @default(cuid())
+  name        String   // Ex: "Corte de Cabelo", "Manicure"
+  description String?
+  price       Decimal  @db.Decimal(10, 2) // Preço em reais
+  duration    Int      // Duração em minutos
+  active      Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamento com o lojista
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Relacionamento com agendamentos
+  appointments Appointment[]
+
+  @@index([userId])
+}
+
+// =============================================
+// MODEL: CUSTOMER (Cliente Final)
+// =============================================
+// Representa o cliente que faz agendamentos.
+// O número de WhatsApp é essencial para notificações.
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String   // Número do WhatsApp (formato: 5511999999999)
+  email     String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamento com o lojista (cada lojista tem sua base de clientes)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Relacionamento com agendamentos
+  appointments Appointment[]
+
+  @@unique([phone, userId]) // Um cliente por telefone por lojista
+  @@index([userId])
+}
+
+// =============================================
+// MODEL: APPOINTMENT (Agendamento)
+// =============================================
+// Representa um agendamento de serviço.
+// Status: PENDING (aguardando), CONFIRMED (confirmado), CANCELLED (cancelado)
+
+enum AppointmentStatus {
+  PENDING   // Aguardando confirmação
+  CONFIRMED // Confirmado pelo lojista ou sistema
+  CANCELLED // Cancelado
+  COMPLETED // Serviço realizado
+}
+
+model Appointment {
+  id        String            @id @default(cuid())
+  date      DateTime          // Data do agendamento
+  startTime DateTime          // Hora de início
+  endTime   DateTime          // Hora de término (calculada com base na duração do serviço)
+  status    AppointmentStatus @default(PENDING)
+  notes     String?           // Observações do cliente
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  serviceId  String
+  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([date])
+  @@index([status])
+}
