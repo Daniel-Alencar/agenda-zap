@@ -109,7 +109,8 @@ model Appointment {
 // Define os horários de atendimento por dia da semana.
 // dayOfWeek: 0 = domingo, 1 = segunda, ..., 6 = sábado
 // Dias sem registro = fechado.
-// slotInterval: intervalo em minutos entre slots (ex: 30 = slots de meia em meia hora)
+// slotInterval: intervalo em minutos entre slots 
+// (ex: 30 = slots de meia em meia hora)
 
 model BusinessHours {
   id           String  @id @default(cuid())
