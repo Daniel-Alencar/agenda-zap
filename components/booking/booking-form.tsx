@@ -1,142 +1,177 @@
 // =============================================
-// FORMULÁRIO DE AGENDAMENTO
+// FORMULÁRIO DE AGENDAMENTO — integrado à API real
 // =============================================
-// Componente cliente para o formulário de agendamento.
-// O cliente final escolhe serviço, data/hora e insere seus dados.
-
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { format } from "date-fns"
+import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { CalendarIcon, Clock, Scissors, User, Phone, CheckCircle } from "lucide-react"
+import {
+  CalendarIcon, Clock, Scissors, User, Phone,
+  CheckCircle, Loader2, AlertCircle,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
-// Esquema de validação do formulário
-const bookingSchema = z.object({
-  serviceId: z.string().min(1, "Selecione um serviço"),
-  date: z.date({ required_error: "Selecione uma data" }),
-  time: z.string().min(1, "Selecione um horário"),
-  customerName: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  customerPhone: z
-    .string()
-    .min(10, "Telefone inválido")
-    .regex(/^[0-9]+$/, "Apenas números"),
-  notes: z.string().optional(),
-})
-
-type BookingFormData = z.infer<typeof bookingSchema>
-
-// Serviços de exemplo (em produção, viriam do banco)
-const services = [
-  { id: "1", name: "Corte de Cabelo", price: 50, duration: 45 },
-  { id: "2", name: "Barba", price: 35, duration: 30 },
-  { id: "3", name: "Corte + Barba", price: 75, duration: 60 },
-  { id: "4", name: "Manicure", price: 40, duration: 40 },
-  { id: "5", name: "Pedicure", price: 45, duration: 45 },
-]
-
-// Horários disponíveis (em produção, viriam da API baseados na agenda)
-const availableTimes = [
-  "09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
-  "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00",
-]
+// ── Tipos ────────────────────────────────────────────────────────────────────
+export interface ServiceOption {
+  id: string
+  name: string
+  description: string | null
+  price: number
+  duration: number
+}
 
 interface BookingFormProps {
   businessName: string
   username: string
+  services: ServiceOption[]
 }
 
-export function BookingForm({ businessName, username }: BookingFormProps) {
+// ── Schema de validação ───────────────────────────────────────────────────────
+const bookingSchema = z.object({
+  serviceId:     z.string().min(1, "Selecione um serviço"),
+  date:          z.date({ required_error: "Selecione uma data" }),
+  time:          z.string().min(1, "Selecione um horário"),
+  customerName:  z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
+  customerPhone: z.string().min(10, "Telefone inválido").regex(/^\d+$/, "Apenas números"),
+  notes:         z.string().optional(),
+})
+
+type BookingFormData = z.infer<typeof bookingSchema>
+
+// ── Componente ────────────────────────────────────────────────────────────────
+export function BookingForm({ businessName, username, services }: BookingFormProps) {
   const [step, setStep] = useState(1)
   const [isSubmitted, setIsSubmitted] = useState(false)
-  const [selectedService, setSelectedService] = useState<typeof services[0] | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Estado dos slots
+  const [slots, setSlots] = useState<string[]>([])
+  const [slotsLoading, setSlotsLoading] = useState(false)
+  const [slotsError, setSlotsError] = useState<string | null>(null)
+  const [dayClosed, setDayClosed] = useState(false)
 
   const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
+    register, handleSubmit, setValue, watch, reset,
     formState: { errors },
-  } = useForm<BookingFormData>({
-    resolver: zodResolver(bookingSchema),
-  })
+  } = useForm<BookingFormData>({ resolver: zodResolver(bookingSchema) })
 
-  const watchedDate = watch("date")
-  const watchedTime = watch("time")
+  const watchedDate      = watch("date")
+  const watchedTime      = watch("time")
   const watchedServiceId = watch("serviceId")
 
-  // Handler para seleção de serviço
-  const handleServiceSelect = (serviceId: string) => {
-    setValue("serviceId", serviceId)
-    const service = services.find((s) => s.id === serviceId)
-    setSelectedService(service || null)
-  }
+  const selectedService = services.find((s) => s.id === watchedServiceId) ?? null
 
-  // Handler para submissão do formulário
+  // ── Busca slots na API sempre que data ou serviço mudam ──────────────────
+  const fetchSlots = useCallback(async (serviceId: string, date: Date) => {
+    setSlotsLoading(true)
+    setSlotsError(null)
+    setDayClosed(false)
+    setSlots([])
+    // Reseta o horário selecionado ao mudar data/serviço
+    setValue("time", "")
+
+    const dateStr = format(date, "yyyy-MM-dd")
+    try {
+      const res = await fetch(
+        `/api/slots?username=${encodeURIComponent(username)}&serviceId=${encodeURIComponent(serviceId)}&date=${dateStr}`
+      )
+      const data = await res.json()
+
+      if (!res.ok) {
+        setSlotsError(data.error ?? "Erro ao buscar horários.")
+        return
+      }
+
+      if (data.closed) {
+        setDayClosed(true)
+        return
+      }
+
+      setSlots(data.slots ?? [])
+      if ((data.slots ?? []).length === 0) {
+        setSlotsError("Nenhum horário disponível nesta data.")
+      }
+    } catch {
+      setSlotsError("Erro de conexão. Tente novamente.")
+    } finally {
+      setSlotsLoading(false)
+    }
+  }, [username, setValue])
+
+  useEffect(() => {
+    if (watchedServiceId && watchedDate) {
+      fetchSlots(watchedServiceId, watchedDate)
+    }
+  }, [watchedServiceId, watchedDate, fetchSlots])
+
+  // ── Submit ────────────────────────────────────────────────────────────────
   const onSubmit = async (data: BookingFormData) => {
-    console.log("[v0] Booking form submitted:", data)
-    
-    // Aqui você faria a chamada à API para criar o agendamento
-    // await fetch(`/api/${username}/book`, { method: 'POST', body: JSON.stringify(data) })
-    
-    // Simula sucesso
-    setIsSubmitted(true)
+    setIsSubmitting(true)
+    setSubmitError(null)
+    try {
+      const res = await fetch(`/api/bookings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          serviceId:     data.serviceId,
+          date:          format(data.date, "yyyy-MM-dd"),
+          time:          data.time,
+          customerName:  data.customerName,
+          customerPhone: data.customerPhone,
+          notes:         data.notes,
+        }),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        setSubmitError(result.error ?? "Erro ao criar agendamento. Tente novamente.")
+        return
+      }
+      setIsSubmitted(true)
+    } catch {
+      setSubmitError("Erro de conexão. Verifique sua internet e tente novamente.")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
-  // Tela de sucesso após agendamento
+  // ── Tela de sucesso ───────────────────────────────────────────────────────
   if (isSubmitted) {
     return (
       <Card className="mx-auto max-w-md">
-        <CardContent className="flex flex-col items-center gap-4 pt-6 text-center">
+        <CardContent className="flex flex-col items-center gap-4 pt-8 pb-6 text-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
             <CheckCircle className="h-8 w-8 text-primary" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-foreground">
-              Agendamento Realizado!
-            </h2>
-            <p className="mt-2 text-muted-foreground">
-              Seu agendamento foi enviado com sucesso. Você receberá uma
-              confirmação pelo WhatsApp em breve.
+            <h2 className="text-xl font-semibold text-foreground">Agendamento Realizado!</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Você receberá uma confirmação pelo WhatsApp em breve.
             </p>
           </div>
-          <div className="w-full rounded-lg bg-muted p-4 text-left">
-            <p className="text-sm text-muted-foreground">Resumo:</p>
-            <p className="font-medium">{selectedService?.name}</p>
-            <p className="text-sm text-muted-foreground">
+          <div className="w-full rounded-lg bg-muted p-4 text-left text-sm">
+            <p className="text-muted-foreground">Resumo:</p>
+            <p className="mt-1 font-medium">{selectedService?.name}</p>
+            <p className="text-muted-foreground">
               {watchedDate && format(watchedDate, "dd 'de' MMMM", { locale: ptBR })} às {watchedTime}
             </p>
           </div>
-          <Button 
-            variant="outline" 
-            className="w-full"
-            onClick={() => {
-              setIsSubmitted(false)
-              setStep(1)
-            }}
+          <Button
+            variant="outline" className="w-full"
+            onClick={() => { setIsSubmitted(false); setStep(1); reset() }}
           >
             Fazer novo agendamento
           </Button>
@@ -153,42 +188,34 @@ export function BookingForm({ businessName, username }: BookingFormProps) {
         <p className="text-muted-foreground">Agende seu horário online</p>
       </div>
 
-      {/* Indicador de Passos */}
+      {/* Indicador de passos */}
       <div className="mb-8 flex items-center justify-center gap-2">
         {[1, 2, 3].map((s) => (
-          <div
-            key={s}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors",
-              step >= s
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground"
-            )}
-          >
+          <div key={s} className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors",
+            step >= s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+          )}>
             {s}
           </div>
         ))}
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)}>
-        {/* Passo 1: Escolher Serviço */}
+
+        {/* ── Passo 1: Serviço ── */}
         {step === 1 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Scissors className="h-5 w-5" />
-                Escolha o Serviço
+                <Scissors className="h-5 w-5" /> Escolha o Serviço
               </CardTitle>
-              <CardDescription>
-                Selecione o serviço que deseja agendar
-              </CardDescription>
+              <CardDescription>Selecione o serviço que deseja agendar</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
               {services.map((service) => (
                 <button
-                  key={service.id}
-                  type="button"
-                  onClick={() => handleServiceSelect(service.id)}
+                  key={service.id} type="button"
+                  onClick={() => setValue("serviceId", service.id)}
                   className={cn(
                     "flex items-center justify-between rounded-lg border p-4 text-left transition-colors",
                     watchedServiceId === service.id
@@ -198,12 +225,13 @@ export function BookingForm({ businessName, username }: BookingFormProps) {
                 >
                   <div>
                     <p className="font-medium text-foreground">{service.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {service.duration} minutos
-                    </p>
+                    {service.description && (
+                      <p className="text-xs text-muted-foreground">{service.description}</p>
+                    )}
+                    <p className="text-sm text-muted-foreground">{service.duration} minutos</p>
                   </div>
                   <p className="text-lg font-semibold text-foreground">
-                    R$ {service.price.toFixed(2).replace(".", ",")}
+                    {Number(service.price).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                   </p>
                 </button>
               ))}
@@ -211,8 +239,7 @@ export function BookingForm({ businessName, username }: BookingFormProps) {
                 <p className="text-sm text-destructive">{errors.serviceId.message}</p>
               )}
               <Button
-                type="button"
-                className="mt-4"
+                type="button" className="mt-2"
                 disabled={!watchedServiceId}
                 onClick={() => setStep(2)}
               >
@@ -222,19 +249,17 @@ export function BookingForm({ businessName, username }: BookingFormProps) {
           </Card>
         )}
 
-        {/* Passo 2: Escolher Data e Hora */}
+        {/* ── Passo 2: Data e Hora ── */}
         {step === 2 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <CalendarIcon className="h-5 w-5" />
-                Escolha Data e Hora
+                <CalendarIcon className="h-5 w-5" /> Escolha Data e Hora
               </CardTitle>
-              <CardDescription>
-                Selecione quando deseja ser atendido
-              </CardDescription>
+              <CardDescription>Selecione quando deseja ser atendido</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-6">
+
               {/* Calendário */}
               <div className="flex flex-col gap-2">
                 <Label>Data</Label>
@@ -242,17 +267,12 @@ export function BookingForm({ businessName, username }: BookingFormProps) {
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
-                      className={cn(
-                        "justify-start text-left font-normal",
-                        !watchedDate && "text-muted-foreground"
-                      )}
+                      className={cn("justify-start text-left font-normal", !watchedDate && "text-muted-foreground")}
                     >
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {watchedDate ? (
-                        format(watchedDate, "dd 'de' MMMM 'de' yyyy", { locale: ptBR })
-                      ) : (
-                        "Selecione uma data"
-                      )}
+                      {watchedDate
+                        ? format(watchedDate, "dd 'de' MMMM 'de' yyyy", { locale: ptBR })
+                        : "Selecione uma data"}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0" align="start">
@@ -260,55 +280,68 @@ export function BookingForm({ businessName, username }: BookingFormProps) {
                       mode="single"
                       selected={watchedDate}
                       onSelect={(date) => date && setValue("date", date)}
-                      disabled={(date) =>
-                        date < new Date() || date.getDay() === 0
-                      }
+                      disabled={(date) => date < new Date(new Date().setHours(0,0,0,0))}
                       locale={ptBR}
                     />
                   </PopoverContent>
                 </Popover>
-                {errors.date && (
-                  <p className="text-sm text-destructive">{errors.date.message}</p>
-                )}
+                {errors.date && <p className="text-sm text-destructive">{errors.date.message}</p>}
               </div>
 
-              {/* Horários */}
-              <div className="flex flex-col gap-2">
-                <Label>Horário</Label>
-                <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
-                  {availableTimes.map((time) => (
-                    <button
-                      key={time}
-                      type="button"
-                      onClick={() => setValue("time", time)}
-                      className={cn(
-                        "flex items-center justify-center rounded-lg border px-3 py-2 text-sm transition-colors",
-                        watchedTime === time
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border hover:border-primary/50"
-                      )}
-                    >
-                      {time}
-                    </button>
-                  ))}
+              {/* Slots */}
+              {watchedDate && (
+                <div className="flex flex-col gap-2">
+                  <Label>Horário disponível</Label>
+
+                  {slotsLoading && (
+                    <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Verificando horários disponíveis...
+                    </div>
+                  )}
+
+                  {!slotsLoading && dayClosed && (
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      Fechado neste dia. Selecione outra data.
+                    </div>
+                  )}
+
+                  {!slotsLoading && slotsError && !dayClosed && (
+                    <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      {slotsError}
+                    </div>
+                  )}
+
+                  {!slotsLoading && !dayClosed && slots.length > 0 && (
+                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+                      {slots.map((slot) => (
+                        <button
+                          key={slot} type="button"
+                          onClick={() => setValue("time", slot)}
+                          className={cn(
+                            "flex items-center justify-center rounded-lg border px-3 py-2 text-sm transition-colors",
+                            watchedTime === slot
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border hover:border-primary/50"
+                          )}
+                        >
+                          {slot}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {errors.time && <p className="text-sm text-destructive">{errors.time.message}</p>}
                 </div>
-                {errors.time && (
-                  <p className="text-sm text-destructive">{errors.time.message}</p>
-                )}
-              </div>
+              )}
 
               <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setStep(1)}>Voltar</Button>
                 <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStep(1)}
-                >
-                  Voltar
-                </Button>
-                <Button
-                  type="button"
-                  className="flex-1"
-                  disabled={!watchedDate || !watchedTime}
+                  type="button" className="flex-1"
+                  disabled={!watchedDate || !watchedTime || slotsLoading}
                   onClick={() => setStep(3)}
                 >
                   Continuar
@@ -318,98 +351,77 @@ export function BookingForm({ businessName, username }: BookingFormProps) {
           </Card>
         )}
 
-        {/* Passo 3: Dados do Cliente */}
+        {/* ── Passo 3: Dados do cliente ── */}
         {step === 3 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <User className="h-5 w-5" />
-                Seus Dados
+                <User className="h-5 w-5" /> Seus Dados
               </CardTitle>
-              <CardDescription>
-                Informe seus dados para finalizar o agendamento
-              </CardDescription>
+              <CardDescription>Informe seus dados para finalizar o agendamento</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              {/* Resumo do Agendamento */}
+
+              {/* Resumo */}
               <div className="rounded-lg bg-muted p-4">
-                <p className="text-sm font-medium text-muted-foreground">Resumo</p>
+                <p className="text-xs text-muted-foreground">Resumo</p>
                 <div className="mt-2 flex items-center justify-between">
                   <div>
                     <p className="font-medium">{selectedService?.name}</p>
                     <p className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {selectedService?.duration} min
+                      <Clock className="h-3 w-3" /> {selectedService?.duration} min
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="font-semibold">
-                      R$ {selectedService?.price.toFixed(2).replace(".", ",")}
+                      {selectedService && Number(selectedService.price).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {watchedDate && format(watchedDate, "dd/MM")} - {watchedTime}
+                      {watchedDate && format(watchedDate, "dd/MM")} — {watchedTime}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Nome */}
-              <div className="flex flex-col gap-2">
+              {submitError && (
+                <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {submitError}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="customerName">Nome completo</Label>
-                <Input
-                  id="customerName"
-                  placeholder="Digite seu nome"
-                  {...register("customerName")}
-                />
-                {errors.customerName && (
-                  <p className="text-sm text-destructive">
-                    {errors.customerName.message}
-                  </p>
-                )}
+                <Input id="customerName" placeholder="Digite seu nome" {...register("customerName")} />
+                {errors.customerName && <p className="text-sm text-destructive">{errors.customerName.message}</p>}
               </div>
 
-              {/* WhatsApp */}
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="customerPhone">WhatsApp</Label>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    id="customerPhone"
-                    placeholder="11999999999"
-                    className="pl-10"
-                    {...register("customerPhone")}
+                    id="customerPhone" placeholder="11999999999"
+                    className="pl-10" {...register("customerPhone")}
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Você receberá a confirmação por WhatsApp
-                </p>
-                {errors.customerPhone && (
-                  <p className="text-sm text-destructive">
-                    {errors.customerPhone.message}
-                  </p>
-                )}
+                <p className="text-xs text-muted-foreground">Você receberá a confirmação por WhatsApp</p>
+                {errors.customerPhone && <p className="text-sm text-destructive">{errors.customerPhone.message}</p>}
               </div>
 
-              {/* Observações */}
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="notes">Observações (opcional)</Label>
-                <Textarea
-                  id="notes"
-                  placeholder="Alguma observação especial?"
-                  {...register("notes")}
-                />
+                <Textarea id="notes" placeholder="Alguma observação especial?" {...register("notes")} />
               </div>
 
               <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStep(2)}
-                >
+                <Button type="button" variant="outline" onClick={() => setStep(2)} disabled={isSubmitting}>
                   Voltar
                 </Button>
-                <Button type="submit" className="flex-1">
-                  Confirmar Agendamento
+                <Button type="submit" className="flex-1" disabled={isSubmitting}>
+                  {isSubmitting
+                    ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Confirmando...</>
+                    : "Confirmar Agendamento"}
                 </Button>
               </div>
             </CardContent>
