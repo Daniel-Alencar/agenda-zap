@@ -5,21 +5,33 @@ import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { prisma } from "@/lib/prisma"
 
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/** Valida que redirectTo é um path interno seguro e não uma string "null"/"undefined". */
+function safeRedirectTo(value: string | null): string {
+  if (!value || value === "null" || value === "undefined") return "/dashboard"
+  if (!value.startsWith("/")) return "/dashboard"
+  return value
+}
+
 // =============================================
 // CADASTRO
 // =============================================
 export async function signUp(formData: FormData) {
   const supabase = await createClient()
 
-  const name = formData.get("name") as string
-  const email = formData.get("email") as string
-  const password = formData.get("password") as string
-  const username = formData.get("username") as string
+  const name     = (formData.get("name")     as string)?.trim()
+  const email    = (formData.get("email")    as string)?.trim()
+  const password = (formData.get("password") as string)
+  const username = (formData.get("username") as string)?.trim().toLowerCase()
+
+  if (!name || !email || !password || !username) {
+    return { error: "Preencha todos os campos obrigatórios." }
+  }
 
   const existingUser = await prisma.user.findUnique({
-    where: { username: username.toLowerCase() },
+    where: { username },
   })
-
   if (existingUser) {
     return { error: "Este nome de usuário já está em uso. Escolha outro." }
   }
@@ -27,9 +39,7 @@ export async function signUp(formData: FormData) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: {
-      data: { name, username: username.toLowerCase() },
-    },
+    options: { data: { name, username } },
   })
 
   if (error) {
@@ -43,30 +53,20 @@ export async function signUp(formData: FormData) {
     return { error: "Não foi possível criar a conta. Tente novamente." }
   }
 
-  // Cria o registro no Prisma — upsert para evitar falha se já existir por alguma razão
   await prisma.user.upsert({
     where: { id: data.user.id },
-    update: { name, username: username.toLowerCase(), email },
-    create: {
-      id: data.user.id,
-      email,
-      name,
-      username: username.toLowerCase(),
-      password: "",
-    },
+    update: { name, username, email },
+    create: { id: data.user.id, email, name, username, password: "" },
   })
 
-  // Quando confirmação de e-mail está ATIVA no Supabase:
-  // data.session === null e data.user.identities pode estar vazio.
-  // Nesse caso não há sessão — informamos o usuário em vez de redirecionar pro dashboard.
+  // Confirmação de e-mail ativa → sem sessão → informa o usuário
   if (!data.session) {
     return {
-      success:
-        "Conta criada! Verifique seu e-mail e clique no link de confirmação para acessar o sistema.",
+      success: "Conta criada! Verifique seu e-mail e clique no link de confirmação para acessar.",
     }
   }
 
-  // Confirmação desativada (desenvolvimento) — redireciona direto
+  // Confirmação desativada → redireciona direto
   revalidatePath("/", "layout")
   redirect("/dashboard")
 }
@@ -77,9 +77,9 @@ export async function signUp(formData: FormData) {
 export async function signIn(formData: FormData) {
   const supabase = await createClient()
 
-  const email = formData.get("email") as string
-  const password = formData.get("password") as string
-  const redirectTo = formData.get("redirectTo") as string
+  const email      = (formData.get("email")      as string)?.trim()
+  const password   = (formData.get("password")   as string)
+  const redirectTo = safeRedirectTo(formData.get("redirectTo") as string | null)
 
   const { error } = await supabase.auth.signInWithPassword({ email, password })
 
@@ -88,16 +88,15 @@ export async function signIn(formData: FormData) {
       return { error: "E-mail ou senha incorretos. Tente novamente." }
     }
     if (error.message.includes("Email not confirmed")) {
-      return {
-        error:
-          "E-mail ainda não confirmado. Verifique sua caixa de entrada (e o spam). Reenviamos o link de confirmação.",
-      }
+      return { error: "E-mail ainda não confirmado. Verifique sua caixa de entrada (incluindo spam)." }
     }
     return { error: error.message }
   }
 
   revalidatePath("/", "layout")
-  redirect(redirectTo || "/dashboard")
+  // Retorna o destino para o cliente navegar — não usa redirect() no servidor
+  // para evitar que seja engolido pelo useTransition do formulário.
+  return { redirectTo }
 }
 
 // =============================================
@@ -115,14 +114,13 @@ export async function signOut() {
 // =============================================
 export async function forgotPassword(formData: FormData) {
   const supabase = await createClient()
-  const email = formData.get("email") as string
+  const email = (formData.get("email") as string)?.trim()
 
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password`,
   })
 
   if (error) return { error: error.message }
-
   return { success: "E-mail de recuperação enviado. Verifique sua caixa de entrada." }
 }
 
@@ -134,7 +132,6 @@ export async function resetPassword(formData: FormData) {
   const password = formData.get("password") as string
 
   const { error } = await supabase.auth.updateUser({ password })
-
   if (error) return { error: error.message }
 
   revalidatePath("/", "layout")
@@ -146,14 +143,9 @@ export async function resetPassword(formData: FormData) {
 // =============================================
 export async function resendConfirmationEmail(formData: FormData) {
   const supabase = await createClient()
-  const email = formData.get("email") as string
+  const email = (formData.get("email") as string)?.trim()
 
-  const { error } = await supabase.auth.resend({
-    type: "signup",
-    email,
-  })
-
+  const { error } = await supabase.auth.resend({ type: "signup", email })
   if (error) return { error: error.message }
-
   return { success: "E-mail de confirmação reenviado. Verifique sua caixa de entrada." }
 }

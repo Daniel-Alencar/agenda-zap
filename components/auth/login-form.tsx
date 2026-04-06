@@ -1,10 +1,7 @@
-// =============================================
-// FORMULÁRIO DE LOGIN (Client Component)
-// =============================================
-
 "use client"
 
 import { useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -17,18 +14,32 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ redirectTo }: LoginFormProps) {
+  const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
   async function handleSubmit(formData: FormData) {
     setError(null)
-    if (redirectTo) formData.set("redirectTo", redirectTo)
+
+    // Só seta redirectTo se for um path válido — evita "null"/"undefined" como string
+    if (redirectTo && redirectTo.startsWith("/")) {
+      formData.set("redirectTo", redirectTo)
+    }
 
     startTransition(async () => {
       const result = await signIn(formData)
+
       if (result?.error) {
         setError(result.error)
+        return
+      }
+
+      // A action retorna { redirectTo } em caso de sucesso.
+      // Usamos router.push() no cliente para navegar — nunca redirect() do servidor
+      // dentro de useTransition, pois ele lança uma exceção que o React captura e engole.
+      if (result?.redirectTo) {
+        router.push(result.redirectTo)
       }
     })
   }
@@ -81,24 +92,16 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             tabIndex={-1}
           >
-            {showPassword ? (
-              <EyeOff className="h-4 w-4" />
-            ) : (
-              <Eye className="h-4 w-4" />
-            )}
+            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
       </div>
 
       <Button type="submit" className="w-full" disabled={isPending}>
-        {isPending ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Entrando...
-          </>
-        ) : (
-          "Entrar"
-        )}
+        {isPending
+          ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Entrando...</>
+          : "Entrar"
+        }
       </Button>
     </form>
   )

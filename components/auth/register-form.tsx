@@ -1,14 +1,16 @@
 "use client"
 
 import { useState, useTransition, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { Eye, EyeOff, Loader2, CheckCircle, XCircle, MailCheck } from "lucide-react"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { signUp } from "@/lib/actions/auth"
-import Link from "next/link"
 
 export function RegisterForm() {
+  const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
@@ -28,9 +30,7 @@ export function RegisterForm() {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/auth/check-username?username=${encodeURIComponent(username)}`
-        )
+        const res = await fetch(`/api/auth/check-username?username=${encodeURIComponent(username)}`)
         const data = await res.json()
         setUsernameStatus(data.available ? "available" : "taken")
       } catch {
@@ -47,19 +47,34 @@ export function RegisterForm() {
   async function handleSubmit(formData: FormData) {
     setError(null)
     setSuccessMessage(null)
+
     if (usernameStatus === "taken") {
       setError("Este nome de usuário já está em uso.")
       return
     }
+
     startTransition(async () => {
       const result = await signUp(formData)
-      if (result?.error) setError(result.error)
-      // Confirmação de e-mail ativa — mostra tela de sucesso
-      if (result?.success) setSuccessMessage(result.success)
+
+      if (result?.error) {
+        setError(result.error)
+        return
+      }
+
+      // Confirmação de e-mail ativa — mostra tela de pendência
+      if (result?.success) {
+        setSuccessMessage(result.success)
+        return
+      }
+
+      // Confirmação desativada — a action chama redirect() internamente.
+      // Como redirect() lança uma exceção especial do Next.js que não é capturada
+      // pelo useTransition, isso funciona corretamente nesse caminho específico.
+      // Mas por segurança, também empurramos a navegação aqui:
+      router.push("/dashboard")
     })
   }
 
-  // Tela de confirmação pendente
   if (successMessage) {
     return (
       <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-card p-6 text-center">
@@ -120,17 +135,15 @@ export function RegisterForm() {
             value={username}
             onChange={(e) => setUsername(formatUsername(e.target.value))}
             className={
-              usernameStatus === "available"
-                ? "border-green-500 pr-10"
-                : usernameStatus === "taken"
-                  ? "border-destructive pr-10"
-                  : "pr-10"
+              usernameStatus === "available" ? "border-green-500 pr-10"
+              : usernameStatus === "taken"   ? "border-destructive pr-10"
+              : "pr-10"
             }
           />
           <span className="absolute right-3 top-1/2 -translate-y-1/2">
             {usernameStatus === "checking" && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             {usernameStatus === "available" && <CheckCircle className="h-4 w-4 text-green-500" />}
-            {usernameStatus === "taken" && <XCircle className="h-4 w-4 text-destructive" />}
+            {usernameStatus === "taken"     && <XCircle    className="h-4 w-4 text-destructive" />}
           </span>
         </div>
         {username.length >= 3 && (
@@ -169,11 +182,10 @@ export function RegisterForm() {
         type="submit" className="w-full"
         disabled={isPending || usernameStatus === "taken"}
       >
-        {isPending ? (
-          <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Criando conta...</>
-        ) : (
-          "Criar conta grátis"
-        )}
+        {isPending
+          ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Criando conta...</>
+          : "Criar conta grátis"
+        }
       </Button>
     </form>
   )

@@ -8,9 +8,7 @@ import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  })
+  const supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,15 +19,10 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
+          cookiesToSet.forEach(({ name, value, options }) => {
             request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({
-            request,
-          })
-          cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
-          )
+          })
         },
       },
     }
@@ -42,19 +35,14 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // Rotas que só podem ser acessadas por usuários NÃO autenticados
-  const authRoutes = ["/login", "/register", "/forgot-password"]
+  const authRoutes = ["/login", "/register", "/forgot-password", "/reset-password"]
   const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route))
-
-  // Rotas protegidas que exigem autenticação
   const isProtectedRoute = pathname.startsWith("/dashboard")
 
-  // Usuário autenticado tentando acessar página de auth → redireciona pro dashboard
   if (user && isAuthRoute) {
     return NextResponse.redirect(new URL("/dashboard", request.url))
   }
 
-  // Usuário NÃO autenticado tentando acessar rota protegida → redireciona pro login
   if (!user && isProtectedRoute) {
     const loginUrl = new URL("/login", request.url)
     loginUrl.searchParams.set("redirectTo", pathname)
@@ -67,13 +55,12 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Aplica o middleware em todas as rotas exceto:
-     * - _next/static (arquivos estáticos)
-     * - _next/image (otimização de imagens)
-     * - favicon.ico
-     * - Rotas públicas de agendamento (/[username]/book)
-     * - Arquivos de imagem
+     * Roda em todas as rotas EXCETO:
+     * - _next/static, _next/image  (assets do Next.js)
+     * - favicon.ico, arquivos de imagem
+     * - /api/*  (route handlers — não precisam de proteção por middleware)
+     * - /[username]/book  (página pública de agendamento)
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon\\.ico|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 }

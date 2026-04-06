@@ -109,8 +109,7 @@ model Appointment {
 // Define os horários de atendimento por dia da semana.
 // dayOfWeek: 0 = domingo, 1 = segunda, ..., 6 = sábado
 // Dias sem registro = fechado.
-// slotInterval: intervalo em minutos entre slots 
-// (ex: 30 = slots de meia em meia hora)
+// slotInterval: intervalo em minutos entre slots (ex: 30 = slots de meia em meia hora)
 
 model BusinessHours {
   id           String  @id @default(cuid())
@@ -118,6 +117,10 @@ model BusinessHours {
   openTime     String  // "HH:MM" ex: "09:00"
   closeTime    String  // "HH:MM" ex: "18:00"
   slotInterval Int     @default(30) // minutos entre slots
+
+  // Intervalo de almoço (opcional)
+  lunchStart   String? // "HH:MM" — null = sem intervalo
+  lunchEnd     String? // "HH:MM"
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -100,16 +100,16 @@ export async function POST(request: NextRequest) {
   const dayOfWeek = date.getDay()
   const businessHours = await prisma.businessHours.findUnique({
     where: { userId_dayOfWeek: { userId: user.id, dayOfWeek } },
-    select: { openTime: true, closeTime: true, slotInterval: true },
+    select: { openTime: true, closeTime: true, slotInterval: true, lunchStart: true, lunchEnd: true },
   })
 
   if (!businessHours && dayOfWeek === 0) {
     return NextResponse.json({ error: "O estabelecimento não funciona aos domingos." }, { status: 409 })
   }
 
-  const { openTime, closeTime, slotInterval } = businessHours ?? DEFAULT_BUSINESS_HOURS
+  const { openTime, closeTime, slotInterval, lunchStart, lunchEnd } = businessHours ?? DEFAULT_BUSINESS_HOURS
 
-  const allSlots = generateSlots({ openTime, closeTime, slotInterval, serviceDuration: service.duration })
+  const allSlots = generateSlots({ openTime, closeTime, slotInterval, serviceDuration: service.duration, lunchStart, lunchEnd })
   if (!allSlots.includes(time)) {
     return NextResponse.json({ error: "Horário inválido para este serviço." }, { status: 409 })
   }

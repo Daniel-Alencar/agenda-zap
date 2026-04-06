@@ -1,40 +1,61 @@
 // =============================================
 // LÓGICA DE CÁLCULO DE SLOTS DISPONÍVEIS
 // =============================================
-// Funções puras — sem dependência do Prisma ou Next.js.
-// Fáceis de testar e reutilizar.
+
+/** Converte "HH:MM" → minutos desde meia-noite */
+export function timeToMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number)
+  return h * 60 + m
+}
+
+/** Converte um Date para minutos desde meia-noite */
+export function dateToMinutes(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+/** Verifica sobreposição entre dois intervalos (em minutos) */
+function overlaps(startA: number, endA: number, startB: number, endB: number): boolean {
+  return startA < endB && startB < endA
+}
 
 /**
- * Gera todos os slots de início possíveis para um dia,
- * com base no horário de funcionamento e no intervalo entre slots.
- *
- * Ex: openTime="09:00", closeTime="18:00", slotInterval=30, serviceDuration=60
- * Retorna: ["09:00","09:30","10:00",...,"17:00"]
- * (último slot começa em 17:00 para terminar às 18:00)
+ * Gera todos os slots de início possíveis para um dia.
+ * O último slot garante que o serviço termina antes do fechamento.
+ * Slots que se sobreponham ao intervalo de almoço são excluídos.
  */
 export function generateSlots({
   openTime,
   closeTime,
   slotInterval,
   serviceDuration,
+  lunchStart,
+  lunchEnd,
 }: {
-  openTime: string      // "HH:MM"
-  closeTime: string     // "HH:MM"
-  slotInterval: number  // minutos entre inícios de slots
-  serviceDuration: number // duração do serviço em minutos
+  openTime:        string
+  closeTime:       string
+  slotInterval:    number
+  serviceDuration: number
+  lunchStart?:     string | null
+  lunchEnd?:       string | null
 }): string[] {
+  const openMin       = timeToMinutes(openTime)
+  const closeMin      = timeToMinutes(closeTime)
+  const lastStart     = closeMin - serviceDuration
+
+  const lunchStartMin = lunchStart ? timeToMinutes(lunchStart) : null
+  const lunchEndMin   = lunchEnd   ? timeToMinutes(lunchEnd)   : null
+  const hasLunch      = lunchStartMin !== null && lunchEndMin !== null
+
   const slots: string[] = []
 
-  const [openH, openM] = openTime.split(":").map(Number)
-  const [closeH, closeM] = closeTime.split(":").map(Number)
+  for (let t = openMin; t <= lastStart; t += slotInterval) {
+    const slotEnd = t + serviceDuration
 
-  const openMinutes = openH * 60 + openM
-  const closeMinutes = closeH * 60 + closeM
+    // Exclui qualquer slot cujo atendimento se sobreponha ao almoço
+    if (hasLunch && overlaps(t, slotEnd, lunchStartMin!, lunchEndMin!)) {
+      continue
+    }
 
-  // O último slot precisa caber inteiro antes do fechamento
-  const lastPossibleStart = closeMinutes - serviceDuration
-
-  for (let t = openMinutes; t <= lastPossibleStart; t += slotInterval) {
     const h = Math.floor(t / 60).toString().padStart(2, "0")
     const m = (t % 60).toString().padStart(2, "0")
     slots.push(`${h}:${m}`)
@@ -44,64 +65,28 @@ export function generateSlots({
 }
 
 /**
- * Verifica se dois intervalos de tempo se sobrepõem.
- * Usa minutos desde meia-noite para comparação exata.
- */
-function overlaps(
-  startA: number, endA: number,
-  startB: number, endB: number
-): boolean {
-  // Sobreposição real: A começa antes de B terminar E B começa antes de A terminar
-  return startA < endB && startB < endA
-}
-
-function timeToMinutes(time: string): number {
-  const [h, m] = time.split(":").map(Number)
-  return h * 60 + m
-}
-
-/**
- * Filtra os slots removendo qualquer um que se sobreponha
- * a um agendamento existente.
- *
- * @param slots       Lista de "HH:MM" gerada por generateSlots
- * @param bookedRanges Lista de {start, end} em minutos desde meia-noite
- * @param serviceDuration Duração do serviço em minutos
+ * Remove slots que se sobrepõem a agendamentos existentes.
  */
 export function filterAvailableSlots({
   slots,
   bookedRanges,
   serviceDuration,
 }: {
-  slots: string[]
-  bookedRanges: Array<{ start: number; end: number }>
+  slots:           string[]
+  bookedRanges:    Array<{ start: number; end: number }>
   serviceDuration: number
 }): string[] {
   return slots.filter((slot) => {
-    const slotStart = timeToMinutes(slot)
-    const slotEnd = slotStart + serviceDuration
-
-    // O slot está livre se não se sobrepõe a nenhum agendamento existente
-    return !bookedRanges.some(({ start, end }) =>
-      overlaps(slotStart, slotEnd, start, end)
-    )
+    const start = timeToMinutes(slot)
+    const end   = start + serviceDuration
+    return !bookedRanges.some(({ start: bs, end: be }) => overlaps(start, end, bs, be))
   })
 }
 
-/**
- * Converte um Date (com fuso horário já considerado) para minutos desde meia-noite.
- */
-export function dateToMinutes(date: Date): number {
-  return date.getHours() * 60 + date.getMinutes()
-}
-
-/**
- * Horários de funcionamento padrão usados como fallback
- * quando o lojista ainda não configurou os horários.
- * Segunda a sábado, 09:00–18:00, slots de 30 em 30 min.
- */
 export const DEFAULT_BUSINESS_HOURS = {
-  openTime: "09:00",
-  closeTime: "18:00",
+  openTime:     "09:00",
+  closeTime:    "18:00",
   slotInterval: 30,
+  lunchStart:   null,
+  lunchEnd:     null,
 }
