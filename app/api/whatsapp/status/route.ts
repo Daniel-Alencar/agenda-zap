@@ -15,33 +15,32 @@ export async function GET() {
 
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
-    select: {
-      evolutionInstanceName: true,
-      evolutionConnected: true,
-    },
+    select: { evolutionInstanceName: true, evolutionConnected: true },
   })
 
   if (!dbUser) return NextResponse.json({ error: "Usuário não encontrado." }, { status: 404 })
 
-  // Se não tem instanceName, retorna estado inicial
   if (!dbUser.evolutionInstanceName) {
-    return NextResponse.json({
-      state: "not_configured",
-      connected: false,
-      instanceName: null,
-    })
+    return NextResponse.json({ state: "not_configured", connected: false, instanceName: null })
   }
 
-  // Consulta o estado em tempo real na Evolution API
   const status = await getInstanceStatus(dbUser.evolutionInstanceName)
 
-  // Sincroniza o banco se o estado mudou
+  console.log(
+    `[/api/whatsapp/status] instance=${dbUser.evolutionInstanceName} state=${status?.state ?? "null (Evolution API não respondeu)"}`
+  )
+
   const isNowConnected = status?.state === "open"
+
+  // Sincroniza o banco se o estado mudou
   if (isNowConnected !== dbUser.evolutionConnected) {
     await prisma.user.update({
       where: { id: user.id },
       data: { evolutionConnected: isNowConnected },
     })
+    console.log(
+      `[/api/whatsapp/status] DB atualizado: evolutionConnected=${isNowConnected}`
+    )
   }
 
   return NextResponse.json({

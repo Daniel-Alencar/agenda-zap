@@ -254,7 +254,7 @@ export function WhatsAppConnect({ initialState }: WhatsAppConnectProps) {
                   <div className="relative rounded-xl border-2 border-border p-3 bg-white">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={`${qrCode}`}
+                      src={`data:image/png;base64,${qrCode}`}
                       alt="QR Code do WhatsApp"
                       className="h-56 w-56"
                       draggable={false}

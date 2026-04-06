@@ -23,7 +23,6 @@ interface SendMediaOptions {
 interface InstanceStatus {
   instanceName: string
   state: "open" | "close" | "connecting"
-  qrcode?: string
 }
 
 export async function sendTextMessage({
@@ -50,14 +49,14 @@ export async function sendTextMessage({
     )
 
     if (!response.ok) {
-      console.error(`[Evolution API] Erro: ${response.statusText}`)
+      console.error(`[Evolution API] sendText erro: ${response.status} ${response.statusText}`)
       return { success: false }
     }
 
     const data = await response.json()
     return { success: true, messageId: data.key?.id }
   } catch (error) {
-    console.error("[Evolution API] Erro ao enviar mensagem:", error)
+    console.error("[Evolution API] sendText falhou:", error)
     return { success: false }
   }
 }
@@ -87,18 +86,29 @@ export async function sendMediaMessage({
     )
 
     if (!response.ok) {
-      console.error(`[Evolution API] Erro: ${response.statusText}`)
+      console.error(`[Evolution API] sendMedia erro: ${response.status} ${response.statusText}`)
       return { success: false }
     }
 
     const data = await response.json()
     return { success: true, messageId: data.key?.id }
   } catch (error) {
-    console.error("[Evolution API] Erro ao enviar mídia:", error)
+    console.error("[Evolution API] sendMedia falhou:", error)
     return { success: false }
   }
 }
 
+/**
+ * Verifica o status de conexão de uma instância.
+ *
+ * A Evolution API v2 retorna:
+ *   { "instance": { "instanceName": "...", "state": "open" } }
+ *
+ * A Evolution API v1 retorna:
+ *   { "state": "open" }
+ *
+ * Esta função lida com os dois formatos.
+ */
 export async function getInstanceStatus(
   instanceName: string
 ): Promise<InstanceStatus | null> {
@@ -107,15 +117,48 @@ export async function getInstanceStatus(
       `${EVOLUTION_API_URL}/instance/connectionState/${instanceName}`,
       { headers: { apikey: EVOLUTION_API_KEY } }
     )
-    if (!response.ok) return null
+
+    if (!response.ok) {
+      console.error(`[Evolution API] connectionState erro: ${response.status} ${response.statusText}`)
+      return null
+    }
+
     const data = await response.json()
-    return { instanceName, state: data.state }
+
+    // v2: { instance: { state: "open" } }
+    // v1: { state: "open" }
+    const state: string | undefined =
+      data?.instance?.state ?? data?.state
+
+    if (!state) {
+      console.error("[Evolution API] connectionState: campo 'state' não encontrado", JSON.stringify(data))
+      return null
+    }
+
+    const normalized = state.toLowerCase()
+    const validState =
+      normalized === "open"       ? "open"
+      : normalized === "connecting" ? "connecting"
+      : "close"
+
+    return { instanceName, state: validState }
   } catch (error) {
-    console.error("[Evolution API] Erro ao verificar status:", error)
+    console.error("[Evolution API] getInstanceStatus falhou:", error)
     return null
   }
 }
 
+/**
+ * Obtém o QR Code para conectar uma instância.
+ *
+ * A Evolution API v2 retorna:
+ *   { "base64": "data:image/png;base64,..." }  ← já inclui o prefixo data URI
+ *
+ * A Evolution API v1 retorna:
+ *   { "base64": "iVBOR..." }  ← apenas o base64 puro
+ *
+ * Esta função normaliza os dois formatos e sempre retorna apenas o base64 puro.
+ */
 export async function getQRCode(
   instanceName: string
 ): Promise<{ qrcode: string } | null> {
@@ -124,11 +167,29 @@ export async function getQRCode(
       `${EVOLUTION_API_URL}/instance/connect/${instanceName}`,
       { headers: { apikey: EVOLUTION_API_KEY } }
     )
-    if (!response.ok) return null
+
+    if (!response.ok) {
+      console.error(`[Evolution API] getQRCode erro: ${response.status} ${response.statusText}`)
+      return null
+    }
+
     const data = await response.json()
-    return { qrcode: data.base64 }
+
+    // Pode vir como "data:image/png;base64,XXXXX" ou apenas "XXXXX"
+    const raw: string | undefined = data?.base64 ?? data?.qrcode
+    if (!raw) {
+      console.error("[Evolution API] getQRCode: campo base64/qrcode não encontrado", JSON.stringify(data))
+      return null
+    }
+
+    // Remove o prefixo data URI se presente — o componente adiciona ele mesmo
+    const pureBase64 = raw.startsWith("data:")
+      ? raw.split(",")[1]
+      : raw
+
+    return { qrcode: raw }
   } catch (error) {
-    console.error("[Evolution API] Erro ao obter QR Code:", error)
+    console.error("[Evolution API] getQRCode falhou:", error)
     return null
   }
 }
@@ -149,18 +210,25 @@ export async function createInstance(
         integration: "WHATSAPP-BAILEYS",
       }),
     })
-    if (!response.ok) return { success: false }
+
+    if (!response.ok) {
+      // 409 = instância já existe — não é erro fatal
+      if (response.status === 409) {
+        return { success: true, instanceName }
+      }
+      console.error(`[Evolution API] createInstance erro: ${response.status} ${response.statusText}`)
+      return { success: false }
+    }
+
     const data = await response.json()
-    return { success: true, instanceName: data.instance?.instanceName }
+    return { success: true, instanceName: data.instance?.instanceName ?? instanceName }
   } catch (error) {
-    console.error("[Evolution API] Erro ao criar instância:", error)
+    console.error("[Evolution API] createInstance falhou:", error)
     return { success: false }
   }
 }
 
-// =============================================
-// TEMPLATES DE MENSAGENS
-// =============================================
+// ── Templates de mensagens ────────────────────────────────────────────────────
 
 export function getBookingConfirmationMessage(data: {
   customerName: string
@@ -169,9 +237,9 @@ export function getBookingConfirmationMessage(data: {
   time: string
   businessName: string
 }): string {
-  return `Olá ${data.customerName}! 👋
+  return `Olá ${data.customerName}!
 
-Seu agendamento foi *confirmado*:
+Seu agendamento foi confirmado:
 
 *Serviço:* ${data.serviceName}
 *Data:* ${data.date}
@@ -188,7 +256,7 @@ export function getBookingReminderMessage(data: {
   time: string
   businessName: string
 }): string {
-  return `Olá ${data.customerName}! 👋
+  return `Olá ${data.customerName}!
 
 Lembrete: você tem um agendamento *hoje* às *${data.time}*.
 
@@ -215,7 +283,7 @@ Seu agendamento foi *cancelado*:
 *Data:* ${data.date}
 *Horário:* ${data.time}
 
-Sentimos muito! Se quiser remarcar, acesse:
+Se quiser remarcar, acesse:
 ${data.bookingUrl}
 
 Qualquer dúvida estamos à disposição em *${data.businessName}*.`
@@ -249,7 +317,7 @@ export function getBookingLinkMessage(data: {
   bookingUrl: string
   businessName: string
 }): string {
-  return `Olá ${data.customerName}! 👋
+  return `Olá ${data.customerName}!
 
 Para agendar seu horário em *${data.businessName}*, acesse o link abaixo:
 
