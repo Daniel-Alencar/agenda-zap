@@ -1,8 +1,12 @@
 // =============================================
 // GET /api/slots
 // =============================================
-// Query params: username, serviceId, date (YYYY-MM-DD)
-// Retorna: { slots: string[], closed: boolean, serviceDuration: number }
+// Query params:
+//   username   — identificador público do lojista
+//   serviceId  — ID do serviço
+//   date       — YYYY-MM-DD
+//   excludeId  — (opcional) ID de agendamento a ignorar na checagem de conflitos
+//                Usado na tela de reagendamento para não bloquear o próprio horário atual
 
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
@@ -20,6 +24,7 @@ export async function GET(request: NextRequest) {
   const username  = searchParams.get("username")
   const serviceId = searchParams.get("serviceId")
   const dateStr   = searchParams.get("date")
+  const excludeId = searchParams.get("excludeId")
 
   if (!username || !serviceId || !dateStr) {
     return NextResponse.json(
@@ -53,7 +58,6 @@ export async function GET(request: NextRequest) {
   }
 
   const dayOfWeek = date.getDay()
-
   const businessHours = await prisma.businessHours.findUnique({
     where: { userId_dayOfWeek: { userId: user.id, dayOfWeek } },
     select: { openTime: true, closeTime: true, slotInterval: true, lunchStart: true, lunchEnd: true },
@@ -67,23 +71,22 @@ export async function GET(request: NextRequest) {
     businessHours ?? DEFAULT_BUSINESS_HOURS
 
   const allSlots = generateSlots({
-    openTime,
-    closeTime,
-    slotInterval,
+    openTime, closeTime, slotInterval,
     serviceDuration: service.duration,
-    lunchStart,
-    lunchEnd,
+    lunchStart, lunchEnd,
   })
 
   if (allSlots.length === 0) {
     return NextResponse.json({ slots: [], closed: false, serviceDuration: service.duration })
   }
 
+  // Busca agendamentos do dia, excluindo o próprio se for reagendamento
   const existingAppointments = await prisma.appointment.findMany({
     where: {
       userId: user.id,
       startTime: { gte: startOfDay(date), lte: endOfDay(date) },
       status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { startTime: true, endTime: true },
   })
@@ -99,7 +102,7 @@ export async function GET(request: NextRequest) {
     serviceDuration: service.duration,
   })
 
-  // Remove slots passados se for hoje
+  // Remove horários já passados se for hoje
   const isToday = startOfDay(date).getTime() === startOfToday().getTime()
   const now     = new Date()
   const cutoff  = now.getHours() * 60 + now.getMinutes() + 30

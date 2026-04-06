@@ -1,16 +1,9 @@
 // =============================================
 // CLIENTE EVOLUTION API
 // =============================================
-// Funções utilitárias para integração com a Evolution API.
-// Documentação: https://doc.evolution-api.com/
 
-// Configuração via variáveis de ambiente
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || "http://localhost:8080"
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || ""
-
-// =============================================
-// TIPOS
-// =============================================
 
 interface SendTextOptions {
   instanceName: string
@@ -33,13 +26,6 @@ interface InstanceStatus {
   qrcode?: string
 }
 
-// =============================================
-// FUNÇÕES DE ENVIO DE MENSAGENS
-// =============================================
-
-/**
- * Envia uma mensagem de texto via WhatsApp
- */
 export async function sendTextMessage({
   instanceName,
   phoneNumber,
@@ -57,13 +43,8 @@ export async function sendTextMessage({
         },
         body: JSON.stringify({
           number: phoneNumber,
-          options: {
-            delay,
-            presence: "composing",
-          },
-          textMessage: {
-            text: message,
-          },
+          options: { delay, presence: "composing" },
+          textMessage: { text: message },
         }),
       }
     )
@@ -81,9 +62,6 @@ export async function sendTextMessage({
   }
 }
 
-/**
- * Envia uma mensagem com mídia (imagem, vídeo, áudio ou documento)
- */
 export async function sendMediaMessage({
   instanceName,
   phoneNumber,
@@ -102,15 +80,8 @@ export async function sendMediaMessage({
         },
         body: JSON.stringify({
           number: phoneNumber,
-          options: {
-            delay: 1200,
-            presence: "composing",
-          },
-          mediaMessage: {
-            mediatype: mediaType,
-            media: mediaUrl,
-            caption,
-          },
+          options: { delay: 1200, presence: "composing" },
+          mediaMessage: { mediatype: mediaType, media: mediaUrl, caption },
         }),
       }
     )
@@ -128,61 +99,32 @@ export async function sendMediaMessage({
   }
 }
 
-// =============================================
-// FUNÇÕES DE GERENCIAMENTO DE INSTÂNCIA
-// =============================================
-
-/**
- * Verifica o status de conexão de uma instância
- */
 export async function getInstanceStatus(
   instanceName: string
 ): Promise<InstanceStatus | null> {
   try {
     const response = await fetch(
       `${EVOLUTION_API_URL}/instance/connectionState/${instanceName}`,
-      {
-        headers: {
-          apikey: EVOLUTION_API_KEY,
-        },
-      }
+      { headers: { apikey: EVOLUTION_API_KEY } }
     )
-
-    if (!response.ok) {
-      return null
-    }
-
+    if (!response.ok) return null
     const data = await response.json()
-    return {
-      instanceName,
-      state: data.state,
-    }
+    return { instanceName, state: data.state }
   } catch (error) {
     console.error("[Evolution API] Erro ao verificar status:", error)
     return null
   }
 }
 
-/**
- * Obtém o QR Code para conectar uma instância
- */
 export async function getQRCode(
   instanceName: string
 ): Promise<{ qrcode: string } | null> {
   try {
     const response = await fetch(
       `${EVOLUTION_API_URL}/instance/connect/${instanceName}`,
-      {
-        headers: {
-          apikey: EVOLUTION_API_KEY,
-        },
-      }
+      { headers: { apikey: EVOLUTION_API_KEY } }
     )
-
-    if (!response.ok) {
-      return null
-    }
-
+    if (!response.ok) return null
     const data = await response.json()
     return { qrcode: data.base64 }
   } catch (error) {
@@ -191,9 +133,6 @@ export async function getQRCode(
   }
 }
 
-/**
- * Cria uma nova instância
- */
 export async function createInstance(
   instanceName: string
 ): Promise<{ success: boolean; instanceName?: string }> {
@@ -210,11 +149,7 @@ export async function createInstance(
         integration: "WHATSAPP-BAILEYS",
       }),
     })
-
-    if (!response.ok) {
-      return { success: false }
-    }
-
+    if (!response.ok) return { success: false }
     const data = await response.json()
     return { success: true, instanceName: data.instance?.instanceName }
   } catch (error) {
@@ -227,9 +162,6 @@ export async function createInstance(
 // TEMPLATES DE MENSAGENS
 // =============================================
 
-/**
- * Gera mensagem de confirmação de agendamento
- */
 export function getBookingConfirmationMessage(data: {
   customerName: string
   serviceName: string
@@ -237,9 +169,9 @@ export function getBookingConfirmationMessage(data: {
   time: string
   businessName: string
 }): string {
-  return `Olá ${data.customerName}!
+  return `Olá ${data.customerName}! 👋
 
-Seu agendamento foi confirmado:
+Seu agendamento foi *confirmado*:
 
 *Serviço:* ${data.serviceName}
 *Data:* ${data.date}
@@ -250,16 +182,13 @@ Aguardamos você em *${data.businessName}*!
 Qualquer dúvida, é só responder esta mensagem.`
 }
 
-/**
- * Gera mensagem de lembrete de agendamento
- */
 export function getBookingReminderMessage(data: {
   customerName: string
   serviceName: string
   time: string
   businessName: string
 }): string {
-  return `Olá ${data.customerName}!
+  return `Olá ${data.customerName}! 👋
 
 Lembrete: você tem um agendamento *hoje* às *${data.time}*.
 
@@ -270,15 +199,57 @@ Aguardamos você em *${data.businessName}*!
 Caso precise remarcar, responda esta mensagem.`
 }
 
-/**
- * Gera mensagem com link de agendamento
- */
+export function getBookingCancellationMessage(data: {
+  customerName: string
+  serviceName: string
+  date: string
+  time: string
+  businessName: string
+  bookingUrl: string
+}): string {
+  return `Olá ${data.customerName}!
+
+Seu agendamento foi *cancelado*:
+
+*Serviço:* ${data.serviceName}
+*Data:* ${data.date}
+*Horário:* ${data.time}
+
+Sentimos muito! Se quiser remarcar, acesse:
+${data.bookingUrl}
+
+Qualquer dúvida estamos à disposição em *${data.businessName}*.`
+}
+
+export function getBookingRescheduleMessage(data: {
+  customerName: string
+  serviceName: string
+  oldDate: string
+  oldTime: string
+  newDate: string
+  newTime: string
+  businessName: string
+}): string {
+  return `Olá ${data.customerName}! 👋
+
+Seu agendamento foi *remarcado*:
+
+*Serviço:* ${data.serviceName}
+
+~~${data.oldDate} às ${data.oldTime}~~
+✅ *${data.newDate} às ${data.newTime}*
+
+Aguardamos você em *${data.businessName}*!
+
+Qualquer dúvida, é só responder esta mensagem.`
+}
+
 export function getBookingLinkMessage(data: {
   customerName: string
   bookingUrl: string
   businessName: string
 }): string {
-  return `Olá ${data.customerName}!
+  return `Olá ${data.customerName}! 👋
 
 Para agendar seu horário em *${data.businessName}*, acesse o link abaixo:
 

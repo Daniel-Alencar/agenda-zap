@@ -1,9 +1,3 @@
-// =============================================
-// QUERIES DO DASHBOARD
-// =============================================
-// Todas as queries Prisma do dashboard centralizadas aqui.
-// Chamadas exclusivamente em Server Components — nunca no cliente.
-
 import { prisma } from "@/lib/prisma"
 import { AppointmentStatus } from "@prisma/client"
 import { startOfDay, endOfDay, startOfMonth, endOfMonth, subMonths } from "date-fns"
@@ -12,37 +6,53 @@ import { startOfDay, endOfDay, startOfMonth, endOfMonth, subMonths } from "date-
 // AGENDAMENTOS DO DIA
 // =============================================
 export async function getTodayAppointments(userId: string) {
-  const now = new Date()
+  const now   = new Date()
   const start = startOfDay(now)
-  const end = endOfDay(now)
+  const end   = endOfDay(now)
 
-  return prisma.appointment.findMany({
+  // Busca o username do lojista (necessário para o dialog de reagendamento)
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { username: true },
+  })
+
+  const appointments = await prisma.appointment.findMany({
     where: {
       userId,
       startTime: { gte: start, lte: end },
       status: { not: AppointmentStatus.CANCELLED },
     },
-    include: {
+    select: {
+      id: true,
+      startTime: true,
+      endTime: true,
+      status: true,
+      notes: true,
+      serviceId: true,                                      // para o dialog de reagendamento
       customer: { select: { name: true, phone: true } },
       service: { select: { name: true, duration: true, price: true } },
     },
     orderBy: { startTime: "asc" },
   })
+
+  // Injeta o username em cada appointment para o componente cliente usar
+  const username = user?.username ?? ""
+  return appointments.map((a) => ({ ...a, username }))
 }
 
 // =============================================
 // MÉTRICAS DO DASHBOARD
 // =============================================
 export async function getDashboardStats(userId: string) {
-  const now = new Date()
-  const todayStart = startOfDay(now)
-  const todayEnd = endOfDay(now)
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
+  const now           = new Date()
+  const todayStart    = startOfDay(now)
+  const todayEnd      = endOfDay(now)
+  const monthStart    = startOfMonth(now)
+  const monthEnd      = endOfMonth(now)
   const lastMonthStart = startOfMonth(subMonths(now, 1))
-  const lastMonthEnd = endOfMonth(subMonths(now, 1))
-  const yesterday = startOfDay(new Date(now.getTime() - 86400000))
-  const yesterdayEnd = endOfDay(new Date(now.getTime() - 86400000))
+  const lastMonthEnd   = endOfMonth(subMonths(now, 1))
+  const yesterday      = startOfDay(new Date(now.getTime() - 86400000))
+  const yesterdayEnd   = endOfDay(new Date(now.getTime() - 86400000))
 
   const [
     todayCount,
@@ -54,7 +64,6 @@ export async function getDashboardStats(userId: string) {
     monthAppointments,
     confirmedAppointments,
   ] = await Promise.all([
-    // Agendamentos hoje (não cancelados)
     prisma.appointment.count({
       where: {
         userId,
@@ -62,8 +71,6 @@ export async function getDashboardStats(userId: string) {
         status: { not: AppointmentStatus.CANCELLED },
       },
     }),
-
-    // Agendamentos ontem (para comparação)
     prisma.appointment.count({
       where: {
         userId,
@@ -71,16 +78,10 @@ export async function getDashboardStats(userId: string) {
         status: { not: AppointmentStatus.CANCELLED },
       },
     }),
-
-    // Total de clientes cadastrados
     prisma.customer.count({ where: { userId } }),
-
-    // Clientes novos este mês
     prisma.customer.count({
       where: { userId, createdAt: { gte: monthStart, lte: monthEnd } },
     }),
-
-    // Receita do mês atual (agendamentos concluídos)
     prisma.appointment.findMany({
       where: {
         userId,
@@ -89,8 +90,6 @@ export async function getDashboardStats(userId: string) {
       },
       include: { service: { select: { price: true } } },
     }),
-
-    // Receita do mês passado (para comparação)
     prisma.appointment.findMany({
       where: {
         userId,
@@ -99,8 +98,6 @@ export async function getDashboardStats(userId: string) {
       },
       include: { service: { select: { price: true } } },
     }),
-
-    // Total de agendamentos no mês (não cancelados)
     prisma.appointment.count({
       where: {
         userId,
@@ -108,8 +105,6 @@ export async function getDashboardStats(userId: string) {
         status: { not: AppointmentStatus.CANCELLED },
       },
     }),
-
-    // Agendamentos confirmados no mês
     prisma.appointment.count({
       where: {
         userId,
@@ -119,49 +114,33 @@ export async function getDashboardStats(userId: string) {
     }),
   ])
 
-  // Calcula receita somando os preços dos serviços
   const currentMonthRevenue = monthRevenue.reduce(
-    (sum, a) => sum + Number(a.service.price),
-    0
+    (sum, a) => sum + Number(a.service.price), 0
   )
   const previousMonthRevenue = lastMonthRevenue.reduce(
-    (sum, a) => sum + Number(a.service.price),
-    0
+    (sum, a) => sum + Number(a.service.price), 0
   )
 
-  // Variação percentual de receita
   const revenueGrowth =
     previousMonthRevenue > 0
-      ? Math.round(
-          ((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) * 100
-        )
+      ? Math.round(((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) * 100)
       : null
 
-  // Taxa de confirmação (confirmados + concluídos / total não cancelados)
   const confirmationRate =
     monthAppointments > 0
       ? Math.round((confirmedAppointments / monthAppointments) * 100)
       : null
 
   return {
-    today: {
-      count: todayCount,
-      vsYesterday: todayCount - yesterdayCount,
-    },
-    customers: {
-      total: totalCustomers,
-      newThisMonth: monthCustomers,
-    },
-    revenue: {
-      thisMonth: currentMonthRevenue,
-      growth: revenueGrowth,
-    },
+    today:            { count: todayCount, vsYesterday: todayCount - yesterdayCount },
+    customers:        { total: totalCustomers, newThisMonth: monthCustomers },
+    revenue:          { thisMonth: currentMonthRevenue, growth: revenueGrowth },
     confirmationRate,
   }
 }
 
 // =============================================
-// PRÓXIMOS AGENDAMENTOS (para listagem futura)
+// PRÓXIMOS AGENDAMENTOS
 // =============================================
 export async function getUpcomingAppointments(userId: string, limit = 10) {
   return prisma.appointment.findMany({
@@ -172,7 +151,7 @@ export async function getUpcomingAppointments(userId: string, limit = 10) {
     },
     include: {
       customer: { select: { name: true, phone: true } },
-      service: { select: { name: true, duration: true, price: true } },
+      service:  { select: { name: true, duration: true, price: true } },
     },
     orderBy: { startTime: "asc" },
     take: limit,
