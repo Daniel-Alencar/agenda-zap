@@ -84,7 +84,9 @@ model Appointment {
   startTime DateTime
   endTime   DateTime
   status    AppointmentStatus @default(PENDING)
-  notes     String?
+  notes          String?
+  // null = lembrete não enviado; preenchido após o envio automático
+  reminderSentAt DateTime? 
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
