@@ -37,7 +37,11 @@ export async function getTodayAppointments(userId: string) {
 
   // Injeta o username em cada appointment para o componente cliente usar
   const username = user?.username ?? ""
-  return appointments.map((a) => ({ ...a, username }))
+  return appointments.map((a) => ({
+    ...a,
+    username,
+    service: { ...a.service, price: Number(a.service.price) },
+  }))
 }
 
 // =============================================

@@ -25,12 +25,24 @@ interface InstanceStatus {
   state: "open" | "close" | "connecting"
 }
 
+/** 
+ * Normaliza o número para o formato que a Evolution API aceita:
+ *  somente dígitos com DDI 55. 
+ **/
+function normalizePhoneNumber(phone: string): string {
+  const digits = phone.replace(/\D/g, "")
+  if (digits.startsWith("55") && digits.length >= 12) return digits
+  if (digits.length >= 10 && digits.length <= 11) return `55${digits}`
+  return digits
+}
+
 export async function sendTextMessage({
   instanceName,
   phoneNumber,
   message,
   delay = 1200,
 }: SendTextOptions): Promise<{ success: boolean; messageId?: string }> {
+  const normalizedPhone = normalizePhoneNumber(phoneNumber)
   try {
     const response = await fetch(
       `${EVOLUTION_API_URL}/message/sendText/${instanceName}`,
@@ -41,9 +53,11 @@ export async function sendTextMessage({
           apikey: EVOLUTION_API_KEY,
         },
         body: JSON.stringify({
-          number: phoneNumber,
-          options: { delay, presence: "composing" },
-          textMessage: { text: message },
+          number: normalizedPhone,
+          text: message,
+          delay: delay,
+          linkPreview: false,
+          mentionsEveryone: false
         }),
       }
     )

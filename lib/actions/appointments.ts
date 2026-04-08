@@ -241,15 +241,19 @@ export async function sendReminderWhatsApp(appointmentId: string) {
       return { error: "WhatsApp não conectado. Configure em Configurações > WhatsApp." }
     }
 
+    const message = getBookingReminderMessage({
+      customerName: appointment.customer.name.split(" ")[0],
+      serviceName: appointment.service.name,
+      time: format(new Date(appointment.startTime), "HH:mm"),
+      businessName: lojista.name
+    });
+
+    console.log(`[sendReminderWhatsApp] Enviando lembrete para ${appointment.customer.phone}: ${message}: ${lojista.evolutionInstanceName}`)
+
     await sendTextMessage({
       instanceName: lojista.evolutionInstanceName,
       phoneNumber: appointment.customer.phone,
-      message: getBookingReminderMessage({
-        customerName: appointment.customer.name.split(" ")[0],
-        serviceName: appointment.service.name,
-        time: format(new Date(appointment.startTime), "HH:mm"),
-        businessName: lojista.name,
-      }),
+      message: message
     })
 
     return { success: true }

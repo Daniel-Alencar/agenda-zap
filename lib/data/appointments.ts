@@ -97,7 +97,10 @@ export async function getAppointments(
   ])
 
   return {
-    appointments,
+    appointments: appointments.map((a) => ({
+      ...a,
+      service: { ...a.service, price: Number(a.service.price) },
+    })),
     total,
     totalPages: Math.ceil(total / APPOINTMENTS_PER_PAGE),
   }

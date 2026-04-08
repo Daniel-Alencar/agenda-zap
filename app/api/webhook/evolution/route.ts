@@ -1,12 +1,3 @@
-// =============================================
-// WEBHOOK DA EVOLUTION API — implementação completa
-// =============================================
-//
-// CONFIGURAÇÃO NO EVOLUTION API:
-//   URL:    https://seu-dominio.com/api/webhook/evolution
-//   Eventos: messages.upsert, connection.update
-//   Header: x-webhook-secret: <WEBHOOK_SECRET>   (opcional mas recomendado)
-
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import {
@@ -18,20 +9,12 @@ import { AppointmentStatus } from "@prisma/client"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
-// ── Tipos ─────────────────────────────────────────────────────────────────────
-
 interface EvolutionWebhookPayload {
   event: string
   instance: string
   data: {
-    // connection.update
     state?: "open" | "close" | "connecting"
-    // messages.upsert
-    key?: {
-      remoteJid: string
-      fromMe: boolean
-      id: string
-    }
+    key?: { remoteJid: string; fromMe: boolean; id: string }
     pushName?: string
     message?: {
       conversation?: string
@@ -101,22 +84,30 @@ function fallbackMessage(businessName: string): string {
   return `Não entendi muito bem 😅\n\nDigite *ajuda* para ver o que posso fazer por você em *${businessName}*!`
 }
 
-// ── Handler de conexão (connection.update) ────────────────────────────────────
+/**
+ * Verifica se o estado da conversa expirou por inatividade.
+ * Timeout de 30 minutos: se o cliente ficou em silêncio após receber o link
+ * ou a pergunta de cancelamento, o estado é ignorado na próxima mensagem.
+ */
+function isStateExpired(lastMessageAt: Date | null): boolean {
+  if (!lastMessageAt) return true
+  const TIMEOUT_MS = 30 * 60 * 1000 // 30 minutos
+  return Date.now() - new Date(lastMessageAt).getTime() > TIMEOUT_MS
+}
+
+// ── Handler de conexão ────────────────────────────────────────────────────────
 
 async function handleConnectionUpdate(payload: EvolutionWebhookPayload) {
   const instanceName = payload.instance
   const state = payload.data.state
-
   console.log(`[Webhook] connection.update | instance=${instanceName} | state=${state}`)
-
-  // Atualiza o status de conexão no banco
   await prisma.user.updateMany({
     where: { evolutionInstanceName: instanceName },
     data: { evolutionConnected: state === "open" },
   })
 }
 
-// ── Handler de mensagem (messages.upsert) ────────────────────────────────────
+// ── Handler de mensagem ───────────────────────────────────────────────────────
 
 async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
   const instanceName = payload.instance
@@ -146,11 +137,27 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
     create: { name: senderName, phone: senderPhone, userId: user.id, lastMessageAt: new Date() },
   })
 
-  const currentState = customer.conversationState as ConversationState
-  const intent       = detectIntent(text)
-  const textLower    = text.toLowerCase()
+  const intent = detectIntent(text)
+  const textLower = text.toLowerCase()
 
-  // Estado: aguardando confirmação de cancelamento
+  // ── Resolve o estado efetivo considerando timeout ──────────────────────────
+  // Se o estado expirou por inatividade (30 min sem resposta), trata como null.
+  // Isso resolve o bug onde o cliente recebia o link, ignorava, e ficava preso
+  // em AWAITING_BOOKING para sempre.
+  const rawState = customer.conversationState as ConversationState
+  const currentState: ConversationState = isStateExpired(customer.lastMessageAt)
+    ? null
+    : rawState
+
+  // Se o estado expirou, limpa no banco silenciosamente
+  if (rawState !== null && currentState === null) {
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: { conversationState: null },
+    })
+  }
+
+  // ── Estado: aguardando confirmação de cancelamento ─────────────────────────
   if (currentState === "AWAITING_CANCEL_CONFIRM") {
     const yes = ["sim", "s", "yes", "confirmar", "pode cancelar", "cancela"].includes(textLower)
     const no  = ["não", "nao", "n", "no", "não cancela", "manter"].includes(textLower)
@@ -199,6 +206,7 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
       return
     }
 
+    // Resposta inválida dentro do estado de cancelamento
     await sendTextMessage({
       instanceName,
       phoneNumber: senderPhone,
@@ -207,14 +215,39 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
     return
   }
 
-  // Intenções padrão
+  // ── Estado: aguardando booking ─────────────────────────────────────────────
+  // CORREÇÃO DO STATE LEAK: qualquer intenção clara que não seja UNKNOWN
+  // enquanto o cliente está em AWAITING_BOOKING limpa o estado e processa
+  // normalmente — o cliente pode ter mudado de ideia e quer fazer outra coisa.
+  if (currentState === "AWAITING_BOOKING" && intent !== "UNKNOWN") {
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: { conversationState: null },
+    })
+    // Cai para o processamento normal abaixo (não retorna aqui)
+  }
+
+  // ── Intenções padrão ───────────────────────────────────────────────────────
+
   if (intent === "GREETING" || intent === "HELP") {
     await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: helpMessage(user.name) })
     return
   }
 
+  // Primeira mensagem genérica (estado null + intenção desconhecida) → menu
   if (intent === "UNKNOWN" && currentState === null) {
     await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: helpMessage(user.name) })
+    return
+  }
+
+  // AWAITING_BOOKING + UNKNOWN → o cliente está respondendo de forma estranha
+  // ao link que recebeu. Mantém o estado e pede para usar o link.
+  if (intent === "UNKNOWN" && currentState === "AWAITING_BOOKING") {
+    await sendTextMessage({
+      instanceName,
+      phoneNumber: senderPhone,
+      message: `Para agendar, use o link que te enviei:\n${bookingUrl}\n\nOu digite *ajuda* para ver outras opções.`,
+    })
     return
   }
 
@@ -316,13 +349,11 @@ export async function POST(request: NextRequest) {
 
     const payload: EvolutionWebhookPayload = await request.json()
 
-    // Trata atualização de conexão — atualiza o banco em tempo real
     if (payload.event === "connection.update") {
       await handleConnectionUpdate(payload)
       return NextResponse.json({ success: true })
     }
 
-    // Ignora outros eventos exceto mensagens recebidas
     if (payload.event !== "messages.upsert") {
       return NextResponse.json({ success: true, message: "Evento ignorado" })
     }

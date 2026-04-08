@@ -131,7 +131,10 @@ export function BookingForm({ businessName, username, services }: BookingFormPro
           date:          format(data.date, "yyyy-MM-dd"),
           time:          data.time,
           customerName:  data.customerName,
-          customerPhone: data.customerPhone,
+          // Garante DDI 55 para o número ser aceito pela Evolution API
+          customerPhone: data.customerPhone.startsWith("55") && data.customerPhone.length >= 12
+            ? data.customerPhone
+            : `55${data.customerPhone}`,
           notes:         data.notes,
         }),
       })
