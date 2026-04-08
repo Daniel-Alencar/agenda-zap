@@ -9,30 +9,90 @@ import { AppointmentStatus } from "@prisma/client"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
+// ── Tipos ─────────────────────────────────────────────────────────────────────
+// A Evolution API v2 pode enviar o payload de duas formas:
+//
+// Forma A (v1 / alguns eventos v2):
+//   { event, instance, data: { key, pushName, message, ... } }
+//
+// Forma B (v2 com messages array):
+//   { event, instance, data: { messages: [{ key, pushName, message, ... }] } }
+//
+// Normalizamos para sempre trabalhar com a Forma A internamente.
+
+interface MessageData {
+  key: { remoteJid: string; fromMe: boolean; id: string, senderPn: string }
+  pushName?: string
+  message?: {
+    conversation?: string
+    extendedTextMessage?: { text: string }
+    imageMessage?: { caption?: string }
+    documentMessage?: { caption?: string }
+  }
+  messageType?: string
+  messageTimestamp?: number
+}
+
 interface EvolutionWebhookPayload {
   event: string
   instance: string
   data: {
+    // connection.update
     state?: "open" | "close" | "connecting"
-    key?: { remoteJid: string; fromMe: boolean; id: string }
+    // messages.upsert — forma A (direta)
+    key?: MessageData["key"]
     pushName?: string
-    message?: {
-      conversation?: string
-      extendedTextMessage?: { text: string }
-      imageMessage?: { caption?: string }
-      documentMessage?: { caption?: string }
-    }
+    message?: MessageData["message"]
     messageType?: string
     messageTimestamp?: number
+    // messages.upsert — forma B (array)
+    messages?: MessageData[]
   }
 }
 
 type ConversationState = "AWAITING_BOOKING" | "AWAITING_CANCEL_CONFIRM" | null
 
+// ── Normalização do payload ───────────────────────────────────────────────────
+
+/**
+ * Extrai os dados da mensagem independente do formato do payload (v1 ou v2).
+ * Retorna null se não for uma mensagem válida de chat individual.
+ */
+function extractMessageData(payload: EvolutionWebhookPayload): MessageData | null {
+  let data: MessageData | null = null
+
+  // Forma B: data.messages é um array
+  if (Array.isArray(payload.data.messages) && payload.data.messages.length > 0) {
+    data = payload.data.messages[0]
+  }
+  // Forma A: key está diretamente em data
+  else if (payload.data.key) {
+    data = {
+      key: payload.data.key,
+      pushName: payload.data.pushName,
+      message: payload.data.message,
+      messageType: payload.data.messageType,
+      messageTimestamp: payload.data.messageTimestamp,
+    }
+  }
+
+  if (!data?.key?.remoteJid) return null
+
+  // Ignora mensagens de grupos (@g.us) e status (@broadcast)
+  if (
+    data.key.remoteJid.endsWith("@g.us") ||
+    data.key.remoteJid.endsWith("@broadcast")
+  ) {
+    return null
+  }
+
+  return data
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function extractText(payload: EvolutionWebhookPayload): string {
-  const msg = payload.data.message
+function extractText(data: MessageData): string {
+  const msg = data.message
   if (!msg) return ""
   return (
     msg.conversation ??
@@ -50,7 +110,7 @@ function normalizePhone(remoteJid: string): string {
 function detectIntent(text: string): "BOOK" | "STATUS" | "CANCEL" | "HELP" | "GREETING" | "UNKNOWN" {
   const lower = text.toLowerCase()
 
-  const greetings = ["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "opa", "ei"]
+  const greetings = ["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "opa", "ei", "hello", "hi"]
   if (greetings.some((g) => lower === g || lower.startsWith(g + " "))) return "GREETING"
 
   const bookKeywords = ["agendar", "agenda", "horário", "horario", "marcar", "disponível",
@@ -84,14 +144,9 @@ function fallbackMessage(businessName: string): string {
   return `Não entendi muito bem 😅\n\nDigite *ajuda* para ver o que posso fazer por você em *${businessName}*!`
 }
 
-/**
- * Verifica se o estado da conversa expirou por inatividade.
- * Timeout de 30 minutos: se o cliente ficou em silêncio após receber o link
- * ou a pergunta de cancelamento, o estado é ignorado na próxima mensagem.
- */
 function isStateExpired(lastMessageAt: Date | null): boolean {
   if (!lastMessageAt) return true
-  const TIMEOUT_MS = 30 * 60 * 1000 // 30 minutos
+  const TIMEOUT_MS = 30 * 60 * 1000
   return Date.now() - new Date(lastMessageAt).getTime() > TIMEOUT_MS
 }
 
@@ -109,14 +164,19 @@ async function handleConnectionUpdate(payload: EvolutionWebhookPayload) {
 
 // ── Handler de mensagem ───────────────────────────────────────────────────────
 
-async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
-  const instanceName = payload.instance
-  const key = payload.data.key
-  if (!key) return
+async function processMessage(
+  instanceName: string,
+  msgData: MessageData
+): Promise<void> {
 
-  const senderPhone = normalizePhone(key.remoteJid)
-  const senderName  = payload.data.pushName || "Cliente"
-  const text        = extractText(payload)
+  console.log(`[Webhook] Payload msgData:`);
+  console.log(msgData);
+
+  const senderPhone = normalizePhone(msgData.key.senderPn.split("@")[0])
+  const senderName  = msgData.pushName || "Cliente"
+  const text        = extractText(msgData)
+
+  console.log(`[Webhook] mensagem de ${senderName} (${senderPhone}): "${text}"`)
 
   const user = await prisma.user.findFirst({
     where: { evolutionInstanceName: instanceName, evolutionConnected: true },
@@ -137,19 +197,15 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
     create: { name: senderName, phone: senderPhone, userId: user.id, lastMessageAt: new Date() },
   })
 
-  const intent = detectIntent(text)
+  const intent    = detectIntent(text)
   const textLower = text.toLowerCase()
 
-  // ── Resolve o estado efetivo considerando timeout ──────────────────────────
-  // Se o estado expirou por inatividade (30 min sem resposta), trata como null.
-  // Isso resolve o bug onde o cliente recebia o link, ignorava, e ficava preso
-  // em AWAITING_BOOKING para sempre.
+  // Estado efetivo com timeout de inatividade
   const rawState = customer.conversationState as ConversationState
   const currentState: ConversationState = isStateExpired(customer.lastMessageAt)
     ? null
     : rawState
 
-  // Se o estado expirou, limpa no banco silenciosamente
   if (rawState !== null && currentState === null) {
     await prisma.customer.update({
       where: { id: customer.id },
@@ -157,7 +213,7 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
     })
   }
 
-  // ── Estado: aguardando confirmação de cancelamento ─────────────────────────
+  // ── AWAITING_CANCEL_CONFIRM ────────────────────────────────────────────────
   if (currentState === "AWAITING_CANCEL_CONFIRM") {
     const yes = ["sim", "s", "yes", "confirmar", "pode cancelar", "cancela"].includes(textLower)
     const no  = ["não", "nao", "n", "no", "não cancela", "manter"].includes(textLower)
@@ -206,7 +262,6 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
       return
     }
 
-    // Resposta inválida dentro do estado de cancelamento
     await sendTextMessage({
       instanceName,
       phoneNumber: senderPhone,
@@ -215,39 +270,31 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
     return
   }
 
-  // ── Estado: aguardando booking ─────────────────────────────────────────────
-  // CORREÇÃO DO STATE LEAK: qualquer intenção clara que não seja UNKNOWN
-  // enquanto o cliente está em AWAITING_BOOKING limpa o estado e processa
-  // normalmente — o cliente pode ter mudado de ideia e quer fazer outra coisa.
+  // ── Limpa AWAITING_BOOKING se o cliente tem intenção clara ─────────────────
   if (currentState === "AWAITING_BOOKING" && intent !== "UNKNOWN") {
     await prisma.customer.update({
       where: { id: customer.id },
       data: { conversationState: null },
     })
-    // Cai para o processamento normal abaixo (não retorna aqui)
   }
 
-  // ── Intenções padrão ───────────────────────────────────────────────────────
+  // ── Intenções ──────────────────────────────────────────────────────────────
 
   if (intent === "GREETING" || intent === "HELP") {
     await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: helpMessage(user.name) })
     return
   }
 
-  // Primeira mensagem genérica (estado null + intenção desconhecida) → menu
-  if (intent === "UNKNOWN" && currentState === null) {
-    await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: helpMessage(user.name) })
-    return
-  }
-
-  // AWAITING_BOOKING + UNKNOWN → o cliente está respondendo de forma estranha
-  // ao link que recebeu. Mantém o estado e pede para usar o link.
-  if (intent === "UNKNOWN" && currentState === "AWAITING_BOOKING") {
-    await sendTextMessage({
-      instanceName,
-      phoneNumber: senderPhone,
-      message: `Para agendar, use o link que te enviei:\n${bookingUrl}\n\nOu digite *ajuda* para ver outras opções.`,
-    })
+  if (intent === "UNKNOWN" && (currentState === null || currentState === "AWAITING_BOOKING")) {
+    if (currentState === "AWAITING_BOOKING") {
+      await sendTextMessage({
+        instanceName,
+        phoneNumber: senderPhone,
+        message: `Para agendar, use o link:\n${bookingUrl}\n\nOu digite *ajuda* para outras opções.`,
+      })
+    } else {
+      await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: helpMessage(user.name) })
+    }
     return
   }
 
@@ -339,15 +386,19 @@ async function processMessage(payload: EvolutionWebhookPayload): Promise<void> {
 
 export async function POST(request: NextRequest) {
   try {
-    const secret = process.env.WEBHOOK_SECRET
-    if (secret) {
-      const incoming = request.headers.get("x-webhook-secret")
-      if (incoming !== secret) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-    }
+    // const secret = process.env.WEBHOOK_SECRET
+    // if (secret) {
+    //   const incoming = request.headers.get("x-webhook-secret")
+    //   console.log(`[Webhook] Secret recebido: ${incoming ? "SIM" : "NÃO"}`)
+
+    //   if (incoming !== secret) {
+    //     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    //   }
+    // }
 
     const payload: EvolutionWebhookPayload = await request.json()
+
+    console.log(`[Webhook] evento recebido: ${payload.event} | instance: ${payload.instance}`)
 
     if (payload.event === "connection.update") {
       await handleConnectionUpdate(payload)
@@ -358,11 +409,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, message: "Evento ignorado" })
     }
 
-    if (payload.data.key?.fromMe) {
+    // Normaliza o payload para lidar com v1 e v2 da Evolution API
+    const msgData = extractMessageData(payload)
+
+    if (!msgData) {
+      return NextResponse.json({ success: true, message: "Mensagem ignorada (grupo, broadcast ou payload inválido)" })
+    }
+
+    if (msgData.key.fromMe) {
       return NextResponse.json({ success: true, message: "Mensagem própria ignorada" })
     }
 
-    processMessage(payload).catch((err) =>
+    // Processa de forma assíncrona — responde 200 imediatamente
+    processMessage(payload.instance, msgData).catch((err) =>
       console.error("[Webhook] Erro ao processar mensagem:", err)
     )
 

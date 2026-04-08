@@ -2,7 +2,7 @@
 // CLIENTE EVOLUTION API
 // =============================================
 
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || "http://localhost:8080"
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || "http://localhost:8081"
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || ""
 
 interface SendTextOptions {
@@ -63,7 +63,16 @@ export async function sendTextMessage({
     )
 
     if (!response.ok) {
-      console.error(`[Evolution API] sendText erro: ${response.status} ${response.statusText}`)
+      // Aqui está a mágica: ler o corpo do erro que a Evolution devolveu
+      const errorText = await response.text();
+      console.error(`[Evolution API] sendText erro: ${response.status} ${response.statusText}`, errorText);
+      
+      // Imprime também o que você tentou enviar para comparar
+      console.error("[Evolution API] Payload que causou o erro:", {
+          number: normalizedPhone,
+          text: message,
+          delay: delay
+      });
       return { success: false }
     }
 
@@ -209,20 +218,35 @@ export async function getQRCode(
 }
 
 export async function createInstance(
-  instanceName: string
+  instanceName: string,
+  webhookUrl?: string
 ): Promise<{ success: boolean; instanceName?: string }> {
   try {
+    const body: Record<string, unknown> = {
+      instanceName,
+      qrcode: true,
+      integration: "WHATSAPP-BAILEYS",
+    }
+
+    // Configura o webhook automaticamente se a URL for fornecida.
+    // Isso garante que mensagens recebidas cheguem ao sistema
+    // sem depender de configuração manual no painel da Evolution API.
+    if (webhookUrl) {
+      body.webhook = {
+        url: webhookUrl,
+        byEvents: true,
+        base64: false,
+        events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+      }
+    }
+
     const response = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         apikey: EVOLUTION_API_KEY,
       },
-      body: JSON.stringify({
-        instanceName,
-        qrcode: true,
-        integration: "WHATSAPP-BAILEYS",
-      }),
+      body: JSON.stringify(body),
     })
 
     if (!response.ok) {
@@ -238,6 +262,44 @@ export async function createInstance(
     return { success: true, instanceName: data.instance?.instanceName ?? instanceName }
   } catch (error) {
     console.error("[Evolution API] createInstance falhou:", error)
+    return { success: false }
+  }
+}
+
+// ── Configurar webhook em instância já existente ─────────────────────────────
+// Útil para instâncias criadas antes do setupWhatsApp passar a configurar
+// o webhook automaticamente.
+
+export async function setInstanceWebhook(
+  instanceName: string,
+  webhookUrl: string
+): Promise<{ success: boolean }> {
+  try {
+    const response = await fetch(
+      `${EVOLUTION_API_URL}/webhook/set/${instanceName}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: EVOLUTION_API_KEY,
+        },
+        body: JSON.stringify({
+          url: webhookUrl,
+          byEvents: true,
+          base64: false,
+          events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+        }),
+      }
+    )
+
+    if (!response.ok) {
+      console.error(`[Evolution API] setWebhook erro: ${response.status} ${response.statusText}`)
+      return { success: false }
+    }
+
+    return { success: true }
+  } catch (error) {
+    console.error("[Evolution API] setWebhook falhou:", error)
     return { success: false }
   }
 }

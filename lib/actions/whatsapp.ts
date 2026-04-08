@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache"
 import { prisma } from "@/lib/prisma"
 import { createClient } from "@/lib/supabase/server"
-import { createInstance, getQRCode } from "@/lib/evolution"
+import { createInstance, setInstanceWebhook, getQRCode } from "@/lib/evolution"
 
 async function getAuthUserId(): Promise<string> {
   const supabase = await createClient()
@@ -29,11 +29,18 @@ export async function setupWhatsApp() {
     // Reutiliza o instanceName existente ou gera um novo
     const instanceName = user.evolutionInstanceName ?? `agendazap_${userId.slice(0, 12)}`
 
-    // Tenta criar a instância — se já existir, a Evolution API retorna erro 400
-    // mas ainda podemos pegar o QR via /instance/connect
-    const created = await createInstance(instanceName)
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ""
+    const webhookUrl = appUrl ? `${appUrl}/api/webhook/evolution` : undefined
 
-    // Atualiza o banco com o instanceName (pode já estar salvo, upsert é seguro)
+    // Cria a instância já com o webhook configurado.
+    // Se já existir (409), configura/atualiza o webhook separadamente.
+    const created = await createInstance(instanceName, webhookUrl)
+
+    if (!created.success && webhookUrl) {
+      await setInstanceWebhook(instanceName, webhookUrl)
+    }
+
+    // Atualiza o banco com o instanceName
     await prisma.user.update({
       where: { id: userId },
       data: {
@@ -64,7 +71,7 @@ export async function disconnectWhatsApp() {
     })
     if (!user?.evolutionInstanceName) return { error: "Nenhuma instância configurada." }
 
-    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL ?? "http://localhost:8080"
+    const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL ?? "http://localhost:8081"
     const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY ?? ""
 
     // Faz logout da instância (desconecta o WhatsApp mas mantém a instância)
