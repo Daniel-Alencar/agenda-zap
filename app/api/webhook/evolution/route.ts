@@ -95,9 +95,21 @@ function extractText(data: MessageData): string {
 }
 
 function extractPhone(data: MessageData): string {
-  // senderPn existe na v2; remoteJid funciona para ambas
-  const raw = data.key.senderPn ?? data.key.remoteJid
-  return raw.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+  console.log("Extracting phone from data:", data);
+
+  const raw = data.key.senderPn ?? data.key.remoteJid ?? "";
+  let phone = raw.replace("@s.whatsapp.net", "").replace(/\D/g, "");
+
+  // Regra para o 9º dígito brasileiro:
+  // Se começa com 55 e tem 12 dígitos (ex: 558791459881 sem o 9 extra),
+  // nós inserimos o '9' após o DDI (55) e antes do DDD.
+  if (phone.startsWith("55") && phone.length === 12) {
+    phone = phone.slice(0, 4) + "9" + phone.slice(4);
+  }
+
+  console.log("Extracted phone:", phone);
+
+  return phone;
 }
 
 function isStateExpired(lastMessageAt: Date | null): boolean {
@@ -287,7 +299,7 @@ async function processMessage(instanceName: string, msgData: MessageData): Promi
     } else {
       // Mensagem aleatória enquanto aguarda → lembra o link e mostra menu
       await reply(
-        `Assim que fizer o agendamento pelo link abaixo, estará confirmado!\n${bookingUrl}\n\n` + menuReturnText(),
+        `Assim que fizer o agendamento pelo link abaixo, estará confirmado!\n\n${bookingUrl}\n\n` + menuReturnText(),
         "MENU"
       )
       return

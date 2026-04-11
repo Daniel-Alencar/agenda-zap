@@ -25,15 +25,28 @@ interface InstanceStatus {
   state: "open" | "close" | "connecting"
 }
 
-/** 
- * Normaliza o número para o formato que a Evolution API aceita:
- *  somente dígitos com DDI 55. 
+/** * Normaliza o número para o formato Evolution API:
+ * Garante o DDI 55 e remove o nono dígito se presente.
  **/
 function normalizePhoneNumber(phone: string): string {
-  const digits = phone.replace(/\D/g, "")
-  if (digits.startsWith("55") && digits.length >= 12) return digits
-  if (digits.length >= 10 && digits.length <= 11) return `55${digits}`
-  return digits
+  let digits = phone.replace(/\D/g, "");
+
+  // Se não tem DDI 55, mas tem o tamanho de um número local (10 ou 11 dígitos), adiciona o 55
+  if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
+    digits = `55${digits}`;
+  }
+
+  // Regra para REMOVER o 9º dígito:
+  // Se começa com 55 e tem 13 dígitos (ex: 55 87 9 1459 8810),
+  // removemos o dígito na posição index 4 (o primeiro dígito após o DDD).
+  if (digits.startsWith("55") && digits.length === 13) {
+    // Mantém o DDI (55) + DDD (posições 2 e 3) e pula o nono dígito (posição 4)
+    digits = digits.slice(0, 4) + digits.slice(5);
+  }
+
+  console.log(`[normalizePhoneNumber] Input: ${phone} → Normalized: ${digits}`);
+
+  return digits;
 }
 
 export async function sendTextMessage({
