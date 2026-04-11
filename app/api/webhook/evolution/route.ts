@@ -1,27 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import {
-  sendTextMessage,
-  getBookingLinkMessage,
-  getBookingConfirmationMessage,
-} from "@/lib/evolution"
+import { sendTextMessage, getBookingLinkMessage } from "@/lib/evolution"
 import { AppointmentStatus } from "@prisma/client"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
-// A Evolution API v2 pode enviar o payload de duas formas:
-//
-// Forma A (v1 / alguns eventos v2):
-//   { event, instance, data: { key, pushName, message, ... } }
-//
-// Forma B (v2 com messages array):
-//   { event, instance, data: { messages: [{ key, pushName, message, ... }] } }
-//
-// Normalizamos para sempre trabalhar com a Forma A internamente.
 
 interface MessageData {
-  key: { remoteJid: string; fromMe: boolean; id: string, senderPn: string }
+  key: { remoteJid: string; fromMe: boolean; id: string; senderPn?: string }
   pushName?: string
   message?: {
     conversation?: string
@@ -37,48 +24,52 @@ interface EvolutionWebhookPayload {
   event: string
   instance: string
   data: {
-    // connection.update
     state?: "open" | "close" | "connecting"
-    // messages.upsert — forma A (direta)
+    // Forma A (v1): campos direto em data
     key?: MessageData["key"]
     pushName?: string
     message?: MessageData["message"]
     messageType?: string
     messageTimestamp?: number
-    // messages.upsert — forma B (array)
+    // Forma B (v2): array de mensagens
     messages?: MessageData[]
   }
 }
 
-type ConversationState = "AWAITING_BOOKING" | "AWAITING_CANCEL_CONFIRM" | null
+// Estados da conversa
+// null            → cliente nunca interagiu ou estado expirou → envia menu
+// "MENU"          → menu foi enviado, aguardando 1, 2 ou 3
+// "AWAITING_BOOKING"        → link de agendamento enviado, aguardando o cliente agendar
+// "AWAITING_CANCEL_CONFIRM" → perguntou se confirma cancelamento, aguardando 1 ou 2
+type ConversationState =
+  | null
+  | "MENU"
+  | "AWAITING_BOOKING"
+  | "AWAITING_CANCEL_CONFIRM"
 
-// ── Normalização do payload ───────────────────────────────────────────────────
+// ── Normalização do payload (v1 e v2 da Evolution API) ────────────────────────
 
-/**
- * Extrai os dados da mensagem independente do formato do payload (v1 ou v2).
- * Retorna null se não for uma mensagem válida de chat individual.
- */
 function extractMessageData(payload: EvolutionWebhookPayload): MessageData | null {
   let data: MessageData | null = null
 
-  // Forma B: data.messages é um array
+  // Forma B: data.messages é um array (Evolution API v2)
   if (Array.isArray(payload.data.messages) && payload.data.messages.length > 0) {
     data = payload.data.messages[0]
   }
-  // Forma A: key está diretamente em data
+  // Forma A: key está diretamente em data (Evolution API v1 / alguns eventos v2)
   else if (payload.data.key) {
     data = {
-      key: payload.data.key,
-      pushName: payload.data.pushName,
-      message: payload.data.message,
-      messageType: payload.data.messageType,
+      key:              payload.data.key,
+      pushName:         payload.data.pushName,
+      message:          payload.data.message,
+      messageType:      payload.data.messageType,
       messageTimestamp: payload.data.messageTimestamp,
     }
   }
 
   if (!data?.key?.remoteJid) return null
 
-  // Ignora mensagens de grupos (@g.us) e status (@broadcast)
+  // Ignora grupos e broadcasts
   if (
     data.key.remoteJid.endsWith("@g.us") ||
     data.key.remoteJid.endsWith("@broadcast")
@@ -103,282 +94,282 @@ function extractText(data: MessageData): string {
   ).trim()
 }
 
-function normalizePhone(remoteJid: string): string {
-  return remoteJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-}
-
-function detectIntent(text: string): "BOOK" | "STATUS" | "CANCEL" | "HELP" | "GREETING" | "UNKNOWN" {
-  const lower = text.toLowerCase()
-
-  const greetings = ["oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "opa", "ei", "hello", "hi"]
-  if (greetings.some((g) => lower === g || lower.startsWith(g + " "))) return "GREETING"
-
-  const bookKeywords = ["agendar", "agenda", "horário", "horario", "marcar", "disponível",
-    "disponivel", "atendimento", "reservar", "quero agendar", "quero marcar"]
-  if (bookKeywords.some((k) => lower.includes(k))) return "BOOK"
-
-  const statusKeywords = ["meu agendamento", "meus agendamentos", "minha consulta",
-    "quando é", "quando e", "confirmar", "confirmado", "agendei"]
-  if (statusKeywords.some((k) => lower.includes(k))) return "STATUS"
-
-  const cancelKeywords = ["cancelar", "cancela", "desmarcar", "desmarca", "não vou", "nao vou"]
-  if (cancelKeywords.some((k) => lower.includes(k))) return "CANCEL"
-
-  const helpKeywords = ["ajuda", "help", "menu", "opções", "opcoes", "o que você faz", "como funciona"]
-  if (helpKeywords.some((k) => lower.includes(k))) return "HELP"
-
-  return "UNKNOWN"
-}
-
-function formatAppointment(a: { startTime: Date; service: { name: string } }): string {
-  const dateStr = format(new Date(a.startTime), "EEEE, d 'de' MMMM", { locale: ptBR })
-  const timeStr = format(new Date(a.startTime), "HH:mm")
-  return `• *${a.service.name}* — ${dateStr} às ${timeStr}`
-}
-
-function helpMessage(businessName: string): string {
-  return `Olá! Sou o assistente de *${businessName}* 👋\n\nPosso te ajudar com:\n\n1️⃣ *Agendar* um horário\n2️⃣ *Consultar* seus agendamentos\n3️⃣ *Cancelar* um agendamento\n\nÉ só me dizer o que deseja! 😊`
-}
-
-function fallbackMessage(businessName: string): string {
-  return `Não entendi muito bem 😅\n\nDigite *ajuda* para ver o que posso fazer por você em *${businessName}*!`
+function extractPhone(data: MessageData): string {
+  // senderPn existe na v2; remoteJid funciona para ambas
+  const raw = data.key.senderPn ?? data.key.remoteJid
+  return raw.replace("@s.whatsapp.net", "").replace(/\D/g, "")
 }
 
 function isStateExpired(lastMessageAt: Date | null): boolean {
   if (!lastMessageAt) return true
-  const TIMEOUT_MS = 30 * 60 * 1000
+  const TIMEOUT_MS = 30 * 60 * 1000 // 30 minutos sem interação → reset
   return Date.now() - new Date(lastMessageAt).getTime() > TIMEOUT_MS
+}
+
+function formatAppointmentLine(a: { startTime: Date; service: { name: string } }): string {
+  const date = format(new Date(a.startTime), "EEE dd/MM", { locale: ptBR })
+  const time = format(new Date(a.startTime), "HH:mm")
+  return `• *${a.service.name}* — ${date} às ${time}`
+}
+
+// ── Interpreta a entrada do usuário ──────────────────────────────────────────
+// Prioridade: número digitado > palavra-chave > nada reconhecido
+
+type MenuChoice = "1" | "2" | "3" | "MENU" | null
+
+function parseInput(text: string): MenuChoice {
+  const t = text.trim()
+
+  // Número exato
+  if (t === "1") return "1"
+  if (t === "2") return "2"
+  if (t === "3") return "3"
+
+  // Palavras-chave como fallback (para quem digitar texto em vez de número)
+  const lower = t.toLowerCase()
+  if (/agendar|agenda|horário|horario|marcar|reservar/.test(lower)) return "1"
+  if (/agendamento|consultar|meu horário|quando|ver/.test(lower))   return "2"
+  if (/cancelar|cancela|desmarcar|desmarca/.test(lower))            return "3"
+
+  // Pedido de menu / saudação
+  if (/menu|ajuda|help|oi|olá|ola|bom dia|boa tarde|boa noite|início|inicio/.test(lower)) return "MENU"
+
+  return null
+}
+
+// ── Textos das mensagens ──────────────────────────────────────────────────────
+
+function menuText(businessName: string, firstName: string): string {
+  return (
+    `Olá, *${firstName}*! 👋\n` +
+    `Bem-vindo(a) a *${businessName}*.\n\n` +
+    `O que você precisa?\n\n` +
+    `*1* — Agendar um horário\n` +
+    `*2* — Ver meus agendamentos\n` +
+    `*3* — Cancelar um agendamento\n\n` +
+    `_Responda com o número da opção._`
+  )
+}
+
+function menuReturnText(): string {
+  return (
+    `O que mais posso fazer?\n\n` +
+    `*1* — Agendar um horário\n` +
+    `*2* — Ver meus agendamentos\n` +
+    `*3* — Cancelar um agendamento`
+  )
+}
+
+function invalidOptionText(): string {
+  return (
+    `Não entendi 😅\n\n` +
+    `Por favor, responda com o número:\n` +
+    `*1* — Agendar\n` +
+    `*2* — Ver agendamentos\n` +
+    `*3* — Cancelar`
+  )
 }
 
 // ── Handler de conexão ────────────────────────────────────────────────────────
 
 async function handleConnectionUpdate(payload: EvolutionWebhookPayload) {
-  const instanceName = payload.instance
-  const state = payload.data.state
-  console.log(`[Webhook] connection.update | instance=${instanceName} | state=${state}`)
+  const { instance: instanceName, data } = payload
+  console.log(`[Webhook] connection.update | ${instanceName} | state=${data.state}`)
   await prisma.user.updateMany({
     where: { evolutionInstanceName: instanceName },
-    data: { evolutionConnected: state === "open" },
+    data:  { evolutionConnected: data.state === "open" },
   })
 }
 
-// ── Handler de mensagem ───────────────────────────────────────────────────────
+// ── Processamento da mensagem ─────────────────────────────────────────────────
 
-async function processMessage(
-  instanceName: string,
-  msgData: MessageData
-): Promise<void> {
-
-  console.log(`[Webhook] Payload msgData:`);
-  console.log(msgData);
-
-  const senderPhone = normalizePhone(msgData.key.senderPn.split("@")[0])
+async function processMessage(instanceName: string, msgData: MessageData): Promise<void> {
+  const senderPhone = extractPhone(msgData)
   const senderName  = msgData.pushName || "Cliente"
+  const firstName   = senderName.split(" ")[0]
   const text        = extractText(msgData)
 
-  console.log(`[Webhook] mensagem de ${senderName} (${senderPhone}): "${text}"`)
+  console.log(`[Webhook] ${senderName} (${senderPhone}): "${text}"`)
 
+  // 1. Busca o lojista pela instância
   const user = await prisma.user.findFirst({
     where: { evolutionInstanceName: instanceName, evolutionConnected: true },
     select: { id: true, name: true, username: true },
   })
-
   if (!user) {
-    console.warn(`[Webhook] Instância "${instanceName}" não associada a nenhum lojista`)
+    console.warn(`[Webhook] Instância "${instanceName}" sem lojista vinculado`)
     return
   }
 
-  const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? "https://agendazap.com"
+  const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? ""
   const bookingUrl = `${appUrl}/${user.username}/book`
 
+  // 2. Upsert do cliente — atualiza lastMessageAt
   const customer = await prisma.customer.upsert({
-    where: { phone_userId: { phone: senderPhone, userId: user.id } },
+    where:  { phone_userId: { phone: senderPhone, userId: user.id } },
     update: { name: senderName, lastMessageAt: new Date() },
     create: { name: senderName, phone: senderPhone, userId: user.id, lastMessageAt: new Date() },
   })
 
-  const intent    = detectIntent(text)
-  const textLower = text.toLowerCase()
+  // 3. Resolve o estado com timeout
+  const rawState     = customer.conversationState as ConversationState
+  const expired      = isStateExpired(customer.lastMessageAt)
+  const currentState = expired ? null : rawState
 
-  // Estado efetivo com timeout de inatividade
-  const rawState = customer.conversationState as ConversationState
-  const currentState: ConversationState = isStateExpired(customer.lastMessageAt)
-    ? null
-    : rawState
-
-  if (rawState !== null && currentState === null) {
-    await prisma.customer.update({
-      where: { id: customer.id },
-      data: { conversationState: null },
-    })
+  if (rawState !== null && expired) {
+    await prisma.customer.update({ where: { id: customer.id }, data: { conversationState: null } })
   }
 
-  // ── AWAITING_CANCEL_CONFIRM ────────────────────────────────────────────────
+  const input    = parseInput(text)
+  const textLower = text.trim().toLowerCase()
+
+  // Helper para salvar o estado e enviar mensagem
+  async function reply(message: string, nextState: ConversationState = null) {
+    await sendTextMessage({ instanceName, phoneNumber: senderPhone, message })
+    await prisma.customer.update({ where: { id: customer.id }, data: { conversationState: nextState } })
+  }
+
+  // ── 4. Máquina de estados ─────────────────────────────────────────────────
+
+  // ── Estado: aguardando SIM/NÃO para confirmar cancelamento ────────────────
   if (currentState === "AWAITING_CANCEL_CONFIRM") {
-    const yes = ["sim", "s", "yes", "confirmar", "pode cancelar", "cancela"].includes(textLower)
-    const no  = ["não", "nao", "n", "no", "não cancela", "manter"].includes(textLower)
+    const yes = ["sim", "s", "1", "yes"].includes(textLower)
+    const no  = ["não", "nao", "n", "2", "no"].includes(textLower)
 
     if (yes) {
       const next = await prisma.appointment.findFirst({
         where: {
           customerId: customer.id,
-          userId: user.id,
-          status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
-          startTime: { gte: new Date() },
+          userId:     user.id,
+          status:     { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
+          startTime:  { gte: new Date() },
         },
         orderBy: { startTime: "asc" },
         include: { service: true },
       })
 
       if (next) {
-        await prisma.appointment.update({
-          where: { id: next.id },
-          data: { status: AppointmentStatus.CANCELLED },
-        })
-        const dateStr = format(new Date(next.startTime), "d 'de' MMMM 'às' HH:mm", { locale: ptBR })
+        await prisma.appointment.update({ where: { id: next.id }, data: { status: AppointmentStatus.CANCELLED } })
+        const dateStr = format(new Date(next.startTime), "d/MM 'às' HH:mm")
         await sendTextMessage({
-          instanceName,
-          phoneNumber: senderPhone,
-          message: `Seu agendamento de *${next.service.name}* no dia *${dateStr}* foi cancelado. ✅\n\nSe quiser reagendar, é só me dizer!`,
+          instanceName, phoneNumber: senderPhone,
+          message: `✅ *${next.service.name}* em ${dateStr} foi cancelado.\n\n` + menuReturnText(),
         })
       } else {
         await sendTextMessage({
-          instanceName,
-          phoneNumber: senderPhone,
-          message: "Não encontrei nenhum agendamento ativo para cancelar.",
+          instanceName, phoneNumber: senderPhone,
+          message: `Não encontrei agendamentos ativos para cancelar.\n\n` + menuReturnText(),
         })
       }
-      await prisma.customer.update({ where: { id: customer.id }, data: { conversationState: null } })
+      await prisma.customer.update({ where: { id: customer.id }, data: { conversationState: "MENU" } })
       return
     }
 
     if (no) {
-      await prisma.customer.update({ where: { id: customer.id }, data: { conversationState: null } })
-      await sendTextMessage({
-        instanceName,
-        phoneNumber: senderPhone,
-        message: "Ok, seu agendamento foi mantido! 👍\n\nSe precisar de algo mais, é só chamar.",
-      })
+      await reply(`👍 Agendamento mantido!\n\n` + menuReturnText(), "MENU")
       return
     }
 
+    // Resposta não reconhecida dentro deste estado
     await sendTextMessage({
-      instanceName,
-      phoneNumber: senderPhone,
-      message: "Por favor, responda *SIM* para confirmar o cancelamento ou *NÃO* para manter.",
+      instanceName, phoneNumber: senderPhone,
+      message: `Responda:\n*1* — Sim, cancelar\n*2* — Não, manter`,
     })
     return
   }
 
-  // ── Limpa AWAITING_BOOKING se o cliente tem intenção clara ─────────────────
-  if (currentState === "AWAITING_BOOKING" && intent !== "UNKNOWN") {
-    await prisma.customer.update({
-      where: { id: customer.id },
-      data: { conversationState: null },
-    })
-  }
-
-  // ── Intenções ──────────────────────────────────────────────────────────────
-
-  if (intent === "GREETING" || intent === "HELP") {
-    await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: helpMessage(user.name) })
-    return
-  }
-
-  if (intent === "UNKNOWN" && (currentState === null || currentState === "AWAITING_BOOKING")) {
-    if (currentState === "AWAITING_BOOKING") {
-      await sendTextMessage({
-        instanceName,
-        phoneNumber: senderPhone,
-        message: `Para agendar, use o link:\n${bookingUrl}\n\nOu digite *ajuda* para outras opções.`,
-      })
+  // ── Estado: link de agendamento enviado, aguardando o cliente agendar ──────
+  if (currentState === "AWAITING_BOOKING") {
+    if (input !== null && input !== "MENU") {
+      // Cliente escolheu outra opção → sai do estado e processa normalmente
+      await prisma.customer.update({ where: { id: customer.id }, data: { conversationState: null } })
+      // deixa cair no bloco de menu abaixo
     } else {
-      await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: helpMessage(user.name) })
+      // Mensagem aleatória enquanto aguarda → lembra o link e mostra menu
+      await reply(
+        `Assim que fizer o agendamento pelo link abaixo, estará confirmado!\n${bookingUrl}\n\n` + menuReturnText(),
+        "MENU"
+      )
+      return
     }
+  }
+
+  // ── Estado: null ou MENU — processa escolha do menu ───────────────────────
+
+  if (input === "1") {
+    await reply(
+      getBookingLinkMessage({ customerName: firstName, bookingUrl, businessName: user.name }),
+      "AWAITING_BOOKING"
+    )
     return
   }
 
-  if (intent === "UNKNOWN") {
-    await sendTextMessage({ instanceName, phoneNumber: senderPhone, message: fallbackMessage(user.name) })
-    return
-  }
-
-  if (intent === "BOOK") {
-    await sendTextMessage({
-      instanceName,
-      phoneNumber: senderPhone,
-      message: getBookingLinkMessage({ customerName: senderName, bookingUrl, businessName: user.name }),
-    })
-    await prisma.customer.update({
-      where: { id: customer.id },
-      data: { conversationState: "AWAITING_BOOKING" },
-    })
-    return
-  }
-
-  if (intent === "STATUS") {
+  if (input === "2") {
     const upcoming = await prisma.appointment.findMany({
       where: {
         customerId: customer.id,
-        userId: user.id,
-        status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
-        startTime: { gte: new Date() },
+        userId:     user.id,
+        status:     { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
+        startTime:  { gte: new Date() },
       },
-      include: { service: true },
-      orderBy: { startTime: "asc" },
-      take: 3,
+      include:  { service: true },
+      orderBy:  { startTime: "asc" },
+      take: 5,
     })
 
     if (upcoming.length === 0) {
-      await sendTextMessage({
-        instanceName,
-        phoneNumber: senderPhone,
-        message: `Olá ${senderName}! Você não tem nenhum agendamento ativo em *${user.name}*.\n\nQuer agendar um horário? 😊`,
-      })
-      return
+      await reply(
+        `Você não tem agendamentos ativos em *${user.name}*.\n\n` + menuReturnText(),
+        "MENU"
+      )
+    } else {
+      const list = upcoming.map(formatAppointmentLine).join("\n")
+      await reply(
+        `📅 Seus próximos agendamentos em *${user.name}*:\n\n${list}\n\n` + menuReturnText(),
+        "MENU"
+      )
     }
-
-    const list = upcoming.map(formatAppointment).join("\n")
-    await sendTextMessage({
-      instanceName,
-      phoneNumber: senderPhone,
-      message: `Seus próximos agendamentos em *${user.name}*:\n\n${list}\n\nPrecisa de algo mais? 😊`,
-    })
     return
   }
 
-  if (intent === "CANCEL") {
+  if (input === "3") {
     const next = await prisma.appointment.findFirst({
       where: {
         customerId: customer.id,
-        userId: user.id,
-        status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
-        startTime: { gte: new Date() },
+        userId:     user.id,
+        status:     { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
+        startTime:  { gte: new Date() },
       },
       orderBy: { startTime: "asc" },
       include: { service: true },
     })
 
     if (!next) {
-      await sendTextMessage({
-        instanceName,
-        phoneNumber: senderPhone,
-        message: `Olá ${senderName}! Não há agendamentos ativos para cancelar em *${user.name}*.`,
-      })
+      await reply(
+        `Não há agendamentos ativos para cancelar em *${user.name}*.\n\n` + menuReturnText(),
+        "MENU"
+      )
       return
     }
 
-    const dateStr = format(new Date(next.startTime), "EEEE, d 'de' MMMM 'às' HH:mm", { locale: ptBR })
-    await sendTextMessage({
-      instanceName,
-      phoneNumber: senderPhone,
-      message: `Você quer cancelar este agendamento?\n\n*${next.service.name}* — ${dateStr}\n\nResponda *SIM* para confirmar ou *NÃO* para manter.`,
-    })
-    await prisma.customer.update({
-      where: { id: customer.id },
-      data: { conversationState: "AWAITING_CANCEL_CONFIRM" },
-    })
+    const dateStr = format(new Date(next.startTime), "EEEE, dd/MM 'às' HH:mm", { locale: ptBR })
+    await reply(
+      `Você quer cancelar este agendamento?\n\n` +
+      `*${next.service.name}* — ${dateStr}\n\n` +
+      `*1* — Sim, cancelar\n` +
+      `*2* — Não, manter`,
+      "AWAITING_CANCEL_CONFIRM"
+    )
     return
+  }
+
+  // Nenhuma opção reconhecida:
+  // — null → primeira interação → menu de boas-vindas
+  // — MENU → cliente digitou algo inválido → pede para repetir
+  if (currentState === null || input === "MENU") {
+    await reply(menuText(user.name, firstName), "MENU")
+  } else {
+    await reply(invalidOptionText(), "MENU")
   }
 }
 
@@ -389,8 +380,6 @@ export async function POST(request: NextRequest) {
     // const secret = process.env.WEBHOOK_SECRET
     // if (secret) {
     //   const incoming = request.headers.get("x-webhook-secret")
-    //   console.log(`[Webhook] Secret recebido: ${incoming ? "SIM" : "NÃO"}`)
-
     //   if (incoming !== secret) {
     //     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     //   }
@@ -398,7 +387,7 @@ export async function POST(request: NextRequest) {
 
     const payload: EvolutionWebhookPayload = await request.json()
 
-    console.log(`[Webhook] evento recebido: ${payload.event} | instance: ${payload.instance}`)
+    console.log(`[Webhook] evento=${payload.event} | instance=${payload.instance}`)
 
     if (payload.event === "connection.update") {
       await handleConnectionUpdate(payload)
@@ -409,20 +398,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, message: "Evento ignorado" })
     }
 
-    // Normaliza o payload para lidar com v1 e v2 da Evolution API
     const msgData = extractMessageData(payload)
-
     if (!msgData) {
-      return NextResponse.json({ success: true, message: "Mensagem ignorada (grupo, broadcast ou payload inválido)" })
+      return NextResponse.json({ success: true, message: "Mensagem ignorada" })
     }
 
     if (msgData.key.fromMe) {
       return NextResponse.json({ success: true, message: "Mensagem própria ignorada" })
     }
 
-    // Processa de forma assíncrona — responde 200 imediatamente
     processMessage(payload.instance, msgData).catch((err) =>
-      console.error("[Webhook] Erro ao processar mensagem:", err)
+      console.error("[Webhook] Erro:", err)
     )
 
     return NextResponse.json({ success: true })
@@ -437,7 +423,7 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     status: "ok",
-    message: "Webhook da Evolution API está ativo",
+    message: "Webhook ativo",
     timestamp: new Date().toISOString(),
   })
 }
