@@ -63,12 +63,14 @@ export async function GET(request: NextRequest) {
     select: { openTime: true, closeTime: true, slotInterval: true, lunchStart: true, lunchEnd: true },
   })
 
-  if (!businessHours && dayOfWeek === 0) {
-    return NextResponse.json({ slots: [], closed: true, reason: "Fechado aos domingos." })
+  // Sem registro no banco = dia fechado.
+  // DEFAULT_BUSINESS_HOURS não é mais usado como fallback — um dia só está
+  // disponível se o lojista o configurou explicitamente em Configurações.
+  if (!businessHours) {
+    return NextResponse.json({ slots: [], closed: true, reason: "Fechado neste dia." })
   }
 
-  const { openTime, closeTime, slotInterval, lunchStart, lunchEnd } =
-    businessHours ?? DEFAULT_BUSINESS_HOURS
+  const { openTime, closeTime, slotInterval, lunchStart, lunchEnd } = businessHours
 
   const allSlots = generateSlots({
     openTime, closeTime, slotInterval,

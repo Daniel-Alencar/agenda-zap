@@ -3,7 +3,7 @@
 // =============================================
 "use client"
 
-import { useState, useTransition } from "react"
+import { useState, useEffect, useTransition } from "react"
 import { Loader2, Save, Clock } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -84,10 +84,12 @@ function buildInitialState(saved: BusinessHoursRow[]): DayState[] {
         lunchEnd:     row.lunchEnd   ?? "13:00",
       }
     }
-    // Padrão para dias não configurados
+    // Dia sem registro no banco = fechado.
+    // Não assumimos padrão "aberto" para não criar divergência entre
+    // o que o usuário salvou e o que a UI mostra após recarregar.
     return {
       dayOfWeek,
-      open:         dayOfWeek !== 0, // fecha domingo por padrão
+      open:         false,
       openTime:     "09:00",
       closeTime:    "18:00",
       slotInterval: 30,
@@ -237,6 +239,14 @@ interface HoursEditorProps {
 export function HoursEditor({ saved }: HoursEditorProps) {
   const [days, setDays] = useState<DayState[]>(() => buildInitialState(saved))
   const [isPending, startTransition] = useTransition()
+
+  // Sincroniza o estado local toda vez que o Server Component envia novos dados.
+  // Isso é necessário porque useState(() => ...) só roda na montagem —
+  // quando revalidatePath faz o Server Component rebuscar, a nova prop 'saved'
+  // chegaria mas seria ignorada pelo useState sem este useEffect.
+  useEffect(() => {
+    setDays(buildInitialState(saved))
+  }, [saved])
 
   function updateDay(dayOfWeek: number, patch: Partial<DayState>) {
     setDays((prev) =>

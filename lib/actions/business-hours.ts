@@ -19,7 +19,7 @@ const daySchema = z.object({
   lunchStart:   z.string().regex(timeRegex, "Horário inválido").nullable(),
   lunchEnd:     z.string().regex(timeRegex, "Horário inválido").nullable(),
 }).superRefine((val, ctx) => {
-  if (!val.open) return // dia fechado — não valida horários
+  if (!val.open) return
 
   const toMin = (t: string) => {
     const [h, m] = t.split(":").map(Number)
@@ -36,25 +36,13 @@ const daySchema = z.object({
 
   if (val.hasLunch && val.lunchStart && val.lunchEnd) {
     if (toMin(val.lunchStart) >= toMin(val.lunchEnd)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Início do almoço deve ser antes do fim.",
-        path: ["lunchEnd"],
-      })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Início do almoço deve ser antes do fim.", path: ["lunchEnd"] })
     }
     if (toMin(val.lunchStart) <= toMin(val.openTime)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Almoço deve ser após a abertura.",
-        path: ["lunchStart"],
-      })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Almoço deve ser após a abertura.", path: ["lunchStart"] })
     }
     if (toMin(val.lunchEnd) >= toMin(val.closeTime)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Almoço deve terminar antes do fechamento.",
-        path: ["lunchEnd"],
-      })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Almoço deve terminar antes do fechamento.", path: ["lunchEnd"] })
     }
   }
 })
@@ -77,38 +65,50 @@ export async function saveBusinessHours(days: DayPayload[]) {
       return { error: msg }
     }
 
-    // Persiste com upsert em paralelo.
-    // Dias marcados como fechados são DELETADOS (sem registro = fechado).
-    // Dias abertos são criados/atualizados.
-    await prisma.$transaction(
-      parsed.data.map((day) => {
-        if (!day.open) {
-          // Remove o registro se existir
-          return prisma.businessHours.deleteMany({
-            where: { userId: user.id, dayOfWeek: day.dayOfWeek },
-          })
-        }
+    // Processa cada dia individualmente com try/catch próprio
+    // para identificar exatamente qual operação falha.
+    for (const day of parsed.data) {
+      if (!day.open) {
+        // Dia fechado: remove o registro se existir
+        await prisma.businessHours.deleteMany({
+          where: { userId: user.id, dayOfWeek: day.dayOfWeek },
+        })
+        continue
+      }
 
-        const data = {
+      // Dia aberto: cria ou atualiza
+      await prisma.businessHours.upsert({
+        where: {
+          userId_dayOfWeek: { userId: user.id, dayOfWeek: day.dayOfWeek },
+        },
+        update: {
           openTime:     day.openTime,
           closeTime:    day.closeTime,
           slotInterval: day.slotInterval,
           lunchStart:   day.hasLunch ? day.lunchStart : null,
           lunchEnd:     day.hasLunch ? day.lunchEnd   : null,
-        }
-
-        return prisma.businessHours.upsert({
-          where: { userId_dayOfWeek: { userId: user.id, dayOfWeek: day.dayOfWeek } },
-          update: data,
-          create: { ...data, dayOfWeek: day.dayOfWeek, userId: user.id },
-        })
+        },
+        create: {
+          dayOfWeek:    day.dayOfWeek,
+          openTime:     day.openTime,
+          closeTime:    day.closeTime,
+          slotInterval: day.slotInterval,
+          lunchStart:   day.hasLunch ? day.lunchStart : null,
+          lunchEnd:     day.hasLunch ? day.lunchEnd   : null,
+          userId:       user.id,
+        },
       })
-    )
+    }
 
     revalidatePath("/dashboard/settings")
+    revalidatePath("/dashboard", "layout")
     return { success: true }
   } catch (err) {
-    console.error("[BusinessHours] save:", err)
-    return { error: "Erro ao salvar. Tente novamente." }
+    // Loga o erro completo no servidor para diagnóstico
+    console.error("[BusinessHours] Erro ao salvar:", err)
+
+    // Retorna a mensagem real do erro para o cliente ver no toast
+    const message = err instanceof Error ? err.message : String(err)
+    return { error: `Erro ao salvar: ${message}` }
   }
 }
