@@ -27,6 +27,7 @@ model User {
   appointments Appointment[]
   customers    Customer[]
   businessHours BusinessHours[]
+  notifications  Notification[]
 }
 
 model Service {
@@ -103,6 +104,23 @@ model Appointment {
   @@index([userId])
   @@index([date])
   @@index([status])
+}
+
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String   // "NEW_BOOKING" | "BOOKING_CANCELLED"
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  userId        String
+  user          User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointmentId String?
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }
 
 // =============================================

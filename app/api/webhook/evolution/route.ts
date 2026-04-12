@@ -262,6 +262,20 @@ async function processMessage(instanceName: string, msgData: MessageData): Promi
 
       if (next) {
         await prisma.appointment.update({ where: { id: next.id }, data: { status: AppointmentStatus.CANCELLED } })
+
+        // Notifica o lojista no painel
+        prisma.notification.create({
+          data: {
+            type:          "BOOKING_CANCELLED",
+            title:         "Agendamento cancelado",
+            body:          `${senderName} cancelou ${next.service.name} de ${format(new Date(next.startTime), "d/MM 'às' HH:mm")}.`,
+            userId:        user.id,
+            appointmentId: next.id,
+          },
+        }).catch(
+          (err) => console.error("[Webhook] Falha ao criar notificação:", err)
+        )
+
         const dateStr = format(new Date(next.startTime), "d/MM 'às' HH:mm")
         await sendTextMessage({
           instanceName, phoneNumber: senderPhone,

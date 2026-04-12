@@ -163,12 +163,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Erro ao salvar o agendamento. Tente novamente." }, { status: 500 })
   }
 
+  // ── Notificação para o lojista no painel ─────────────────────────────────
+  const dateFormatted = format(date, "dd/MM/yyyy", { locale: ptBR })
+  const dayFormatted  = format(date, "EEEE", { locale: ptBR })
+  const dateLabel     = `${dayFormatted.charAt(0).toUpperCase() + dayFormatted.slice(1)}, ${dateFormatted}`
+
+  prisma.notification.create({
+    data: {
+      type:          "NEW_BOOKING",
+      title:         "Novo agendamento",
+      body:          `${customerName} agendou ${service.name} para ${dateLabel} às ${time}.`,
+      userId:        user.id,
+      appointmentId: appointment.id,
+    },
+  }).catch((err) => console.error("[Bookings] Falha ao criar notificação:", err))
+
   // ── Mensagens WhatsApp — fora da transaction ─────────────────────────────
   if (user.evolutionConnected && user.evolutionInstanceName) {
-    const dateFormatted = format(date, "dd/MM/yyyy", { locale: ptBR })
-    const dayFormatted  = format(date, "EEEE", { locale: ptBR })
-    const dateLabel     = `${dayFormatted.charAt(0).toUpperCase() + dayFormatted.slice(1)}, ${dateFormatted}`
-
     // 1. Confirmação para o cliente
     sendTextMessage({
       instanceName: user.evolutionInstanceName,
