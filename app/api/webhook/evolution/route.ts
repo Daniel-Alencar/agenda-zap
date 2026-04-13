@@ -67,12 +67,12 @@ function extractMessageData(payload: EvolutionWebhookPayload): MessageData | nul
     }
   }
 
-  if (!data?.key?.remoteJid) return null
+  if (!data?.key?.senderPn) return null
 
   // Ignora grupos e broadcasts
   if (
-    data.key.remoteJid.endsWith("@g.us") ||
-    data.key.remoteJid.endsWith("@broadcast")
+    data.key.senderPn.endsWith("@g.us") ||
+    data.key.senderPn.endsWith("@broadcast")
   ) {
     return null
   }
@@ -102,7 +102,7 @@ function extractPhone(data: MessageData): string {
 
   // Regra para o 9º dígito brasileiro:
   // Se começa com 55 e tem 12 dígitos (ex: 558791459881 sem o 9 extra),
-  // nós inserimos o '9' após o DDI (55) e antes do DDD.
+  // nós inserimos o '9' após o DDI (55) e DDD.
   if (phone.startsWith("55") && phone.length === 12) {
     phone = phone.slice(0, 4) + "9" + phone.slice(4);
   }
@@ -111,6 +111,7 @@ function extractPhone(data: MessageData): string {
 
   return phone;
 }
+
 
 function isStateExpired(lastMessageAt: Date | null): boolean {
   if (!lastMessageAt) return true
@@ -216,21 +217,37 @@ async function processMessage(instanceName: string, msgData: MessageData): Promi
   const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? ""
   const bookingUrl = `${appUrl}/${user.username}/book`
 
-  // 2. Upsert do cliente — atualiza lastMessageAt
-  const customer = await prisma.customer.upsert({
-    where:  { phone_userId: { phone: senderPhone, userId: user.id } },
-    update: { name: senderName, lastMessageAt: new Date() },
-    create: { name: senderName, phone: senderPhone, userId: user.id, lastMessageAt: new Date() },
+  // 2. Localiza o cliente (sem atualizar ainda — precisamos ler o estado antes).
+  // Busca tolerando variação de DDI (com e sem prefixo 55).
+  const phoneAlt = senderPhone.startsWith("55") ? senderPhone.slice(2) : `55${senderPhone}`
+  const existing = await prisma.customer.findFirst({
+    where: { userId: user.id, phone: { in: [senderPhone, phoneAlt] } },
   })
 
-  // 3. Resolve o estado com timeout
-  const rawState     = customer.conversationState as ConversationState
-  const expired      = isStateExpired(customer.lastMessageAt)
-  const currentState = expired ? null : rawState
+  // 3. Lê o estado ANTES de atualizar lastMessageAt.
+  // Se isStateExpired usasse o lastMessageAt já atualizado para "agora",
+  // o timeout de 30 min nunca funcionaria. Além disso, em mensagens enviadas
+  // rapidamente em sequência, atualizar o campo antes de ler causava race condition:
+  // duas chamadas paralelas ao processMessage liam estados inconsistentes.
+  const rawState = (existing?.conversationState ?? null) as ConversationState
+  const expired  = isStateExpired(existing?.lastMessageAt ?? null)
+  const currentState: ConversationState = expired ? null : rawState
 
-  if (rawState !== null && expired) {
-    await prisma.customer.update({ where: { id: customer.id }, data: { conversationState: null } })
-  }
+  // Agora sim: cria ou atualiza o cliente com o lastMessageAt correto
+  const customer = existing
+    ? await prisma.customer.update({
+        where: { id: existing.id },
+        data:  {
+          name:          senderName,
+          phone:         senderPhone,
+          lastMessageAt: new Date(),
+          // Limpa o estado expirado diretamente no update, evitando um segundo round-trip
+          ...(rawState !== null && expired ? { conversationState: null } : {}),
+        },
+      })
+    : await prisma.customer.create({
+        data: { name: senderName, phone: senderPhone, userId: user.id, lastMessageAt: new Date() },
+      })
 
   const input    = parseInput(text)
   const textLower = text.trim().toLowerCase()
@@ -313,7 +330,7 @@ async function processMessage(instanceName: string, msgData: MessageData): Promi
     } else {
       // Mensagem aleatória enquanto aguarda → lembra o link e mostra menu
       await reply(
-        `Assim que fizer o agendamento pelo link abaixo, estará confirmado!\n\n${bookingUrl}\n\n` + menuReturnText(),
+        `Assim que fizer o agendamento pelo link abaixo, estará confirmado!\n${bookingUrl}\n\n` + menuReturnText(),
         "MENU"
       )
       return
