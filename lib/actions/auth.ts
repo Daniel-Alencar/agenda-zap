@@ -24,14 +24,13 @@ export async function signUp(formData: FormData) {
   const email    = (formData.get("email")    as string)?.trim()
   const password = (formData.get("password") as string)
   const username = (formData.get("username") as string)?.trim().toLowerCase()
+  const plan     = (formData.get("plan")     as string | null) // "MONTHLY" | "ANNUAL" | null
 
   if (!name || !email || !password || !username) {
     return { error: "Preencha todos os campos obrigatórios." }
   }
 
-  const existingUser = await prisma.user.findUnique({
-    where: { username },
-  })
+  const existingUser = await prisma.user.findUnique({ where: { username } })
   if (existingUser) {
     return { error: "Este nome de usuário já está em uso. Escolha outro." }
   }
@@ -53,20 +52,37 @@ export async function signUp(formData: FormData) {
     return { error: "Não foi possível criar a conta. Tente novamente." }
   }
 
+  const now          = new Date()
+  const trialEndsAt  = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) // +7 dias
+
+  // Se o usuário já escolheu um plano no cadastro, marca como ACTIVE
+  // com prazo baseado no plano (30 ou 365 dias a partir de hoje).
+  // Na prática, o lojista deve ativar manualmente após confirmar o pagamento.
+  // Este campo apenas registra a INTENÇÃO — a ativação real vem do admin.
+  const planType     = plan === "MONTHLY" || plan === "ANNUAL" ? plan : null
+  const planStatus   = "TRIAL" as const  // sempre começa como TRIAL; admin ativa depois
+
   await prisma.user.upsert({
     where: { id: data.user.id },
     update: { name, username, email },
-    create: { id: data.user.id, email, name, username, password: "" },
+    create: {
+      id: data.user.id,
+      email,
+      name,
+      username,
+      password:     "",
+      planStatus,
+      planType,
+      trialEndsAt,
+    },
   })
 
-  // Confirmação de e-mail ativa → sem sessão → informa o usuário
   if (!data.session) {
     return {
       success: "Conta criada! Verifique seu e-mail e clique no link de confirmação para acessar.",
     }
   }
 
-  // Confirmação desativada → redireciona direto
   revalidatePath("/", "layout")
   redirect("/dashboard")
 }

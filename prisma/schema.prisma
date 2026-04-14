@@ -7,6 +7,18 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+
+enum PlanStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+}
+
+enum PlanType {
+  MONTHLY
+  ANNUAL
+}
+
 model User {
   // UUID do Supabase Auth
   id        String   @id 
@@ -20,14 +32,20 @@ model User {
   evolutionInstanceName String?
   evolutionConnected    Boolean @default(false)
 
+  // Assinatura
+  planStatus   PlanStatus @default(TRIAL)
+  planType     PlanType?              // null enquanto em trial
+  trialEndsAt  DateTime               // definido no cadastro: now + 7 dias
+  planExpiresAt DateTime?             // definido ao ativar plano pago
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  services     Service[]
-  appointments Appointment[]
-  customers    Customer[]
+  services      Service[]
+  appointments  Appointment[]
+  customers     Customer[]
   businessHours BusinessHours[]
-  notifications  Notification[]
+  notifications Notification[]
 }
 
 model Service {
@@ -105,7 +123,6 @@ model Appointment {
   @@index([date])
   @@index([status])
 }
-
 
 model Notification {
   id        String   @id @default(cuid())

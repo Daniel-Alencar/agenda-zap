@@ -15,43 +15,70 @@ export default async function DashboardLayout({
     data: { user: authUser },
   } = await supabase.auth.getUser()
 
-  if (!authUser) {
-    redirect("/login")
-  }
+  if (!authUser) redirect("/login")
 
-  // Busca o usuário no Prisma
+  // Busca o usuário no Prisma incluindo campos de assinatura
   let user = await prisma.user.findUnique({
-    where: { id: authUser.id },
-    select: { id: true, name: true, email: true, username: true, evolutionConnected: true },
+    where:  { id: authUser.id },
+    select: {
+      id:                true,
+      name:              true,
+      email:             true,
+      username:          true,
+      evolutionConnected: true,
+      planStatus:        true,
+      trialEndsAt:       true,
+      planExpiresAt:     true,
+    },
   })
 
-  // Usuário existe no Supabase mas ainda não no Prisma.
-  // Isso acontece quando o cadastro foi feito mas o create no Prisma falhou,
-  // ou quando o e-mail foi confirmado e a sessão foi criada antes do registro existir.
-  // Solução: recriar o registro a partir dos metadados do Supabase.
+  // Usuário existe no Supabase mas ainda não no Prisma — recria o registro.
   if (!user) {
-    const meta = authUser.user_metadata ?? {}
-    const name = (meta.name as string) || authUser.email?.split("@")[0] || "Usuário"
+    const meta     = authUser.user_metadata ?? {}
+    const name     = (meta.name as string) || authUser.email?.split("@")[0] || "Usuário"
     const username =
       (meta.username as string) ||
       authUser.email?.split("@")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "") ||
       `user_${authUser.id.slice(0, 8)}`
 
-    // Garante que o username não colide com outro já existente
     const safeUsername = await ensureUniqueUsername(username)
 
     user = await prisma.user.upsert({
-      where: { id: authUser.id },
+      where:  { id: authUser.id },
       update: {},
       create: {
-        id: authUser.id,
-        email: authUser.email!,
+        id:          authUser.id,
+        email:       authUser.email!,
         name,
-        username: safeUsername,
-        password: "",
+        username:    safeUsername,
+        password:    "",
+        trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
-      select: { id: true, name: true, email: true, username: true, evolutionConnected: true },
+      select: {
+        id:                true,
+        name:              true,
+        email:             true,
+        username:          true,
+        evolutionConnected: true,
+        planStatus:        true,
+        trialEndsAt:       true,
+        planExpiresAt:     true,
+      },
     })
+  }
+
+  // ── Verificação de assinatura ─────────────────────────────────────────────
+  // Feito aqui no Server Component porque o middleware roda no Edge Runtime
+  // e não pode importar o Prisma.
+  // A página /pricing fica FORA de /dashboard, então não há loop de redirect.
+  const now = new Date()
+  const expired =
+    user.planStatus === "EXPIRED" ||
+    (user.planStatus === "TRIAL"  && new Date(user.trialEndsAt)  < now) ||
+    (user.planStatus === "ACTIVE" && user.planExpiresAt !== null && new Date(user.planExpiresAt) < now)
+
+  if (expired) {
+    redirect("/pricing")
   }
 
   return (
@@ -74,12 +101,10 @@ async function ensureUniqueUsername(base: string): Promise<string> {
   const existing = await prisma.user.findUnique({ where: { username: base } })
   if (!existing) return base
 
-  // Tenta base_2, base_3, ...
   for (let i = 2; i <= 99; i++) {
     const candidate = `${base}_${i}`
-    const conflict = await prisma.user.findUnique({ where: { username: candidate } })
+    const conflict  = await prisma.user.findUnique({ where: { username: candidate } })
     if (!conflict) return candidate
   }
-  // Fallback com parte do UUID
   return `${base}_${Date.now().toString(36)}`
 }
