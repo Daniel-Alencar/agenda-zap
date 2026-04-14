@@ -100,15 +100,38 @@ export function RegisterForm() {
   function handleStep2() {
     if (!savedData) return
     startTransition(async () => {
+      // 1. Cria a conta (sempre como TRIAL — o webhook do MP ativa o plano pago)
       const fd = new FormData()
       fd.append("name",     savedData.name)
       fd.append("email",    savedData.email)
       fd.append("username", savedData.username)
       fd.append("password", savedData.password)
-      if (selectedPlan !== "TRIAL") fd.append("plan", selectedPlan)
       const result = await signUp(fd)
       if (result?.error)   { setError(result.error); setStep(1); return }
       if (result?.success) { setSuccessMessage(result.success); return }
+
+      // 2. Plano pago → cria preference no MP e redireciona para checkout
+      if (selectedPlan !== "TRIAL") {
+        try {
+          const res  = await fetch("/api/payment/create-preference", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ planType: selectedPlan }),
+          })
+          const data = await res.json()
+          if (!res.ok || !data.checkoutUrl) {
+            // fallback: usa o trial
+            router.push("/dashboard") 
+            return
+          }
+          window.location.href = data.checkoutUrl
+          return
+        } catch {
+          router.push("/dashboard")
+          return
+        }
+      }
+
       router.push("/dashboard")
     })
   }
@@ -280,11 +303,7 @@ export function RegisterForm() {
         ))}
       </div>
 
-      {selectedPlan !== "TRIAL" && (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-          Após criar sua conta, nossa equipe entrará em contato para confirmar o pagamento e ativar seu plano.
-        </p>
-      )}
+
 
       <Button onClick={handleStep2} disabled={isPending} className="w-full gap-2">
         {isPending

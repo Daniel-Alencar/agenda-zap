@@ -33,10 +33,14 @@ model User {
   evolutionConnected    Boolean @default(false)
 
   // Assinatura
-  planStatus   PlanStatus @default(TRIAL)
-  planType     PlanType?              // null enquanto em trial
-  trialEndsAt  DateTime               // definido no cadastro: now + 7 dias
-  planExpiresAt DateTime?             // definido ao ativar plano pago
+  planStatus    PlanStatus @default(TRIAL)
+  planType      PlanType?              // null enquanto em trial
+  trialEndsAt   DateTime               // definido no cadastro: now + 7 dias
+  planExpiresAt DateTime?              // definido ao ativar plano pago
+
+  // Mercado Pago
+  mpCustomerId    String?  // external_reference usado nas preferências
+  pendingPlanType PlanType? // plano escolhido aguardando pagamento
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -146,7 +150,8 @@ model Notification {
 // Define os horários de atendimento por dia da semana.
 // dayOfWeek: 0 = domingo, 1 = segunda, ..., 6 = sábado
 // Dias sem registro = fechado.
-// slotInterval: intervalo em minutos entre slots (ex: 30 = slots de meia em meia hora)
+// slotInterval: intervalo em minutos entre slots 
+// (ex: 30 = slots de meia em meia hora)
 
 model BusinessHours {
   id           String  @id @default(cuid())
