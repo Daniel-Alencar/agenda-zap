@@ -28,8 +28,7 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // IMPORTANTE: 
-  // não adicione lógica entre createServerClient e supabase.auth.getUser()
+  // IMPORTANTE: não adicione lógica entre createServerClient e supabase.auth.getUser()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -37,17 +36,25 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const authRoutes = ["/login", "/register", "/forgot-password", "/reset-password"]
-  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route))
+  const isAuthRoute      = authRoutes.some((route) => pathname.startsWith(route))
   const isProtectedRoute = pathname.startsWith("/dashboard")
+  const isPaymentRoute   = pathname.startsWith("/pricing") || pathname.startsWith("/payment")
 
-  if (user && isAuthRoute) {
+  // Usuário autenticado tentando acessar login/register → dashboard
+  if (user && isAuthRoute && !isPaymentRoute) {
     return NextResponse.redirect(new URL("/dashboard", request.url))
   }
 
+  // Usuário não autenticado tentando acessar dashboard → login
   if (!user && isProtectedRoute) {
     const loginUrl = new URL("/login", request.url)
     loginUrl.searchParams.set("redirectTo", pathname)
     return NextResponse.redirect(loginUrl)
+  }
+
+  // /pricing e /payment/* exigem autenticação mas não são /dashboard
+  if (!user && isPaymentRoute) {
+    return NextResponse.redirect(new URL("/login", request.url))
   }
 
   return supabaseResponse

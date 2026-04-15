@@ -84,7 +84,10 @@ export async function signUp(formData: FormData) {
   }
 
   revalidatePath("/", "layout")
-  redirect("/dashboard")
+  // Retorna o destino para o cliente navegar — NÃO usa redirect() do servidor.
+  // redirect() lança NEXT_REDIRECT que interrompe a Server Action imediatamente,
+  // impedindo o handleStep2 do register-form de continuar para o fluxo de pagamento.
+  return { redirectTo: "/dashboard" }
 }
 
 // =============================================

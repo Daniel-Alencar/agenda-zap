@@ -109,6 +109,7 @@ export function RegisterForm() {
       const result = await signUp(fd)
       if (result?.error)   { setError(result.error); setStep(1); return }
       if (result?.success) { setSuccessMessage(result.success); return }
+      // result.redirectTo = "/dashboard" significa que a conta foi criada com sessão ativa
 
       // 2. Plano pago → cria preference no MP e redireciona para checkout
       if (selectedPlan !== "TRIAL") {
@@ -120,8 +121,7 @@ export function RegisterForm() {
           })
           const data = await res.json()
           if (!res.ok || !data.checkoutUrl) {
-            // fallback: usa o trial
-            router.push("/dashboard") 
+            router.push("/dashboard") // fallback: usa o trial
             return
           }
           window.location.href = data.checkoutUrl

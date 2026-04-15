@@ -62,7 +62,8 @@ export async function createPaymentPreference({
       back_urls: {
         success: `${appUrl}/payment/success`,
         failure: `${appUrl}/payment/failure`,
-        pending: `${appUrl}/payment/success`, // pending também vai para success com mensagem adequada
+        // pending também vai para success com mensagem adequada
+        pending: `${appUrl}/payment/success`,
       },
       auto_return:         "approved",
       notification_url:    `${appUrl}/api/payment/webhook`,
