@@ -16,7 +16,6 @@ export default function PaymentFailurePage() {
 
         <div className="flex flex-col gap-2">
           <div className="flex h-10 w-10 mx-auto items-center justify-center rounded-lg bg-primary">
-            <Calendar className="h-5 w-5 text-primary-foreground" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">Pagamento não concluído</h1>
           <p className="text-muted-foreground">
