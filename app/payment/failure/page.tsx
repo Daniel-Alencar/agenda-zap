@@ -15,8 +15,6 @@ export default function PaymentFailurePage() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <div className="flex h-10 w-10 mx-auto items-center justify-center rounded-lg bg-primary">
-          </div>
           <h1 className="text-2xl font-bold text-foreground">Pagamento não concluído</h1>
           <p className="text-muted-foreground">
             Não foi possível processar seu pagamento. Nenhum valor foi cobrado. Você pode tentar novamente ou usar os 7 dias grátis.
