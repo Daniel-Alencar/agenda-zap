@@ -68,12 +68,14 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between">
           <Label htmlFor="password">Senha</Label>
-          <Link
-            href="/forgot-password"
-            className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-          >
-            Esqueceu a senha?
-          </Link>
+          {/* 
+            <Link
+              href="/forgot-password"
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Esqueceu a senha?
+            </Link> 
+          */}
         </div>
         <div className="relative">
           <Input

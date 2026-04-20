@@ -54,12 +54,15 @@ export default function HomePage() {
       {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-              <Calendar className="h-4 w-4 text-primary-foreground" />
+          <Link href="/">
+            <div className="flex items-center gap-2">
+              
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+                <Calendar className="h-4 w-4 text-primary-foreground" />
+              </div>
+              <span className="text-lg font-semibold text-foreground">AgendaZap</span>
             </div>
-            <span className="text-lg font-semibold text-foreground">AgendaZap</span>
-          </div>
+          </Link>
           <div className="flex items-center gap-4">
             <Link href="/login">
               <Button variant="ghost">Entrar</Button>

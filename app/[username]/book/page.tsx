@@ -2,6 +2,7 @@ import { notFound } from "next/navigation"
 import { Calendar } from "lucide-react"
 import { prisma } from "@/lib/prisma"
 import { BookingForm } from "@/components/booking/booking-form"
+import Link from "next/link"
 
 interface BookingPageProps {
   params: Promise<{ username: string }>
@@ -38,12 +39,14 @@ export default async function BookingPage({ params }: BookingPageProps) {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-card">
-        <div className="mx-auto flex max-w-2xl items-center justify-center gap-2 px-4 py-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <Calendar className="h-4 w-4 text-primary-foreground" />
+        <Link href="/">
+          <div className="mx-auto flex max-w-2xl items-center justify-center gap-2 px-4 py-4">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+              <Calendar className="h-4 w-4 text-primary-foreground" />
+            </div>
+            <span className="text-lg font-semibold text-foreground">AgendaZap</span>
           </div>
-          <span className="text-lg font-semibold text-foreground">AgendaZap</span>
-        </div>
+        </Link>
       </header>
 
       <main className="mx-auto max-w-2xl px-4 py-8">

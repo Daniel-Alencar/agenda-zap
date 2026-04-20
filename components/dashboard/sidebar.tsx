@@ -101,12 +101,14 @@ export function DashboardSidebar({
   return (
     <aside className="hidden w-64 flex-col border-r border-border bg-card lg:flex">
       {/* Logo */}
-      <div className="flex h-16 items-center gap-2 border-b border-border px-6">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-          <Calendar className="h-4 w-4 text-primary-foreground" />
+      <Link href="/">
+        <div className="flex h-16 items-center gap-2 border-b border-border px-6">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+            <Calendar className="h-4 w-4 text-primary-foreground" />
+          </div>
+          <span className="text-lg font-semibold text-foreground">AgendaZap</span>
         </div>
-        <span className="text-lg font-semibold text-foreground">AgendaZap</span>
-      </div>
+      </Link>
 
       {/* Navegação principal */}
       <nav className="flex-1 p-4">
