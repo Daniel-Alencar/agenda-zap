@@ -216,7 +216,7 @@ export default function HomePage() {
               <span className="text-sm font-medium text-foreground">AgendaZap</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              2024 AgendaZap. Todos os direitos reservados.
+              2026 AgendaZap. Todos os direitos reservados.
             </p>
           </div>
         </div>
