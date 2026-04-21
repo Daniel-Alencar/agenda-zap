@@ -23,7 +23,7 @@ export const PLANS = [
   {
     id:        "MONTHLY" as const,
     name:      "Mensal",
-    price:     "R$ 49",
+    price:     "R$ 29",
     period:    "/mês",
     desc:      "Flexibilidade total",
     icon:      <Zap className="h-5 w-5" />,
@@ -34,7 +34,7 @@ export const PLANS = [
   {
     id:        "ANNUAL" as const,
     name:      "Anual",
-    price:     "R$ 39",
+    price:     "R$ 25",
     period:    "/mês",
     desc:      "Economize 20% — R$ 468/ano",
     icon:      <Crown className="h-5 w-5" />,

@@ -289,12 +289,14 @@ export function DashboardHeader({ userName, userEmail, username }: DashboardHead
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            {/* 
             <DropdownMenuItem asChild>
               <Link href="/dashboard/settings" className="flex items-center gap-2">
                 <User className="h-4 w-4" />
                 Meu Perfil
               </Link>
-            </DropdownMenuItem>
+            </DropdownMenuItem> 
+            */}
             <DropdownMenuItem asChild>
               <Link href="/dashboard/settings" className="flex items-center gap-2">
                 <Settings className="h-4 w-4" />

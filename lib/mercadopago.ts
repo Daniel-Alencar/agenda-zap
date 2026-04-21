@@ -18,12 +18,12 @@ export const mpClient = new MercadoPagoConfig({
 export const PLAN_CONFIG = {
   MONTHLY: {
     title:       "AgendaZap — Plano Mensal",
-    unit_price:  49.00,
+    unit_price:  29.00,
     months:      1,
   },
   ANNUAL: {
     title:       "AgendaZap — Plano Anual",
-    unit_price:  468.00,  // 39 × 12
+    unit_price:  300.00,  // 25 × 12
     months:      12,
   },
 } as const

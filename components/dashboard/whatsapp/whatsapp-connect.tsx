@@ -368,6 +368,7 @@ export function WhatsAppConnect({ initialState }: WhatsAppConnectProps) {
 
           <Separator />
 
+          {/* 
           <div className="flex flex-col gap-2 text-sm text-muted-foreground">
             <p className="font-medium text-foreground">Como configurar:</p>
             <ol className="flex flex-col gap-1 list-decimal list-inside">
@@ -377,7 +378,8 @@ export function WhatsAppConnect({ initialState }: WhatsAppConnectProps) {
               <li>Selecione os eventos: <code className="rounded bg-muted px-1">messages.upsert</code> e <code className="rounded bg-muted px-1">connection.update</code></li>
               <li>Salve as configurações</li>
             </ol>
-          </div>
+          </div> 
+          */}
 
           <a
             href="https://doc.evolution-api.com"
