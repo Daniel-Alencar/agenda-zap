@@ -204,9 +204,15 @@ async function processMessage(instanceName: string, msgData: MessageData): Promi
 
   console.log(`[Webhook] ${senderName} (${senderPhone}): "${text}"`)
 
-  // 1. Busca o lojista pela instância
+  // 1. Busca o lojista pela instância.
+  // NÃO filtramos por evolutionConnected: true — esse campo no banco pode estar
+  // desatualizado se o lojista não abriu o dashboard recentemente (o polling que
+  // sincroniza esse campo só roda enquanto o dashboard está aberto). 
+  // O que realmente
+  // importa é que a mensagem chegou via webhook, o que por si só prova que a
+  // instância está ativa na Evolution API.
   const user = await prisma.user.findFirst({
-    where: { evolutionInstanceName: instanceName, evolutionConnected: true },
+    where: { evolutionInstanceName: instanceName },
     select: { id: true, name: true, username: true },
   })
   if (!user) {
