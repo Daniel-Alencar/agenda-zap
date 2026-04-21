@@ -12,9 +12,11 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="mb-8 flex flex-col items-center gap-2">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
-            <Calendar className="h-6 w-6 text-primary-foreground" />
-          </div>
+          <Link href="/">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
+              <Calendar className="h-6 w-6 text-primary-foreground" />
+            </div>
+          </Link>
           <h1 className="text-2xl font-bold text-foreground">AgendaZap</h1>
           <p className="text-sm text-muted-foreground">
             Crie sua conta grátis
