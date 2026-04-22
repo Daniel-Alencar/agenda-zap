@@ -11,23 +11,30 @@ import {
   LayoutDashboard,
   MessageCircle,
   CreditCard,
+  X,
 } from "lucide-react"
 
 const navigation = [
-  { name: "Dashboard",      href: "/dashboard",              icon: LayoutDashboard },
-  { name: "Agendamentos",   href: "/dashboard/appointments", icon: Calendar        },
-  { name: "Serviços",       href: "/dashboard/services",     icon: Scissors        },
-  { name: "Clientes",       href: "/dashboard/customers",    icon: Users           },
-  { name: "WhatsApp",       href: "/dashboard/whatsapp",     icon: MessageCircle   },
-  { name: "Configurações",  href: "/dashboard/settings",     icon: Settings        },
+  { name: "Dashboard",     href: "/dashboard",              icon: LayoutDashboard },
+  { name: "Agendamentos",  href: "/dashboard/appointments", icon: Calendar        },
+  { name: "Serviços",      href: "/dashboard/services",     icon: Scissors        },
+  { name: "Clientes",      href: "/dashboard/customers",    icon: Users           },
+  { name: "WhatsApp",      href: "/dashboard/whatsapp",     icon: MessageCircle   },
+  { name: "Configurações", href: "/dashboard/settings",     icon: Settings        },
 ]
 
 interface DashboardSidebarProps {
+  /** Controla visibilidade no mobile — passado pelo DashboardShell */
+  open?:             boolean
+  /** Fecha o sidebar no mobile */
+  onClose?:          () => void
   whatsappConnected?: boolean
-  planStatus?:   "TRIAL" | "ACTIVE" | "EXPIRED"
-  trialEndsAt?:  string | null  // ISO string
-  planExpiresAt?: string | null
+  planStatus?:       "TRIAL" | "ACTIVE" | "EXPIRED"
+  trialEndsAt?:      string | null
+  planExpiresAt?:    string | null
 }
+
+// ── Badge de status do plano ──────────────────────────────────────────────────
 
 function PlanBadge({
   planStatus,
@@ -47,15 +54,12 @@ function PlanBadge({
   }
 
   if (planStatus === "ACTIVE") {
-    const exp = planExpiresAt ? new Date(planExpiresAt) : null
-    // Avisa se expira em menos de 7 dias
-    const expiring = exp && (exp.getTime() - now.getTime()) < 7 * 24 * 60 * 60 * 1000
+    const exp      = planExpiresAt ? new Date(planExpiresAt) : null
+    const expiring = exp !== null && (exp.getTime() - now.getTime()) < 7 * 24 * 60 * 60 * 1000
     return (
       <span className={cn(
         "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-        expiring
-          ? "bg-amber-500/15 text-amber-700"
-          : "bg-green-500/15 text-green-700"
+        expiring ? "bg-amber-500/15 text-amber-700" : "bg-green-500/15 text-green-700"
       )}>
         {expiring ? "Expirando" : "Ativo"}
       </span>
@@ -65,8 +69,8 @@ function PlanBadge({
   // TRIAL
   if (trialEndsAt) {
     const end      = new Date(trialEndsAt)
-    const daysLeft = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / 86400000))
     const expired  = end < now
+    const daysLeft = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / 86400000))
 
     if (expired) {
       return (
@@ -78,9 +82,7 @@ function PlanBadge({
     return (
       <span className={cn(
         "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-        daysLeft <= 2
-          ? "bg-destructive/15 text-destructive"
-          : "bg-amber-500/15 text-amber-700"
+        daysLeft <= 2 ? "bg-destructive/15 text-destructive" : "bg-amber-500/15 text-amber-700"
       )}>
         {daysLeft}d grátis
       </span>
@@ -90,7 +92,11 @@ function PlanBadge({
   return null
 }
 
+// ── Componente principal ──────────────────────────────────────────────────────
+
 export function DashboardSidebar({
+  open = false,
+  onClose,
   whatsappConnected = false,
   planStatus,
   trialEndsAt,
@@ -99,26 +105,52 @@ export function DashboardSidebar({
   const pathname = usePathname()
 
   return (
-    <aside className="hidden w-64 flex-col border-r border-border bg-card lg:flex">
-      {/* Logo */}
-      <Link href="/">
-        <div className="flex h-16 items-center gap-2 border-b border-border px-6">
+    <aside
+      className={cn(
+        // Dimensões e visual
+        "flex w-64 flex-shrink-0 flex-col border-r border-border bg-card",
+
+        // ── Desktop (lg+): sempre visível, estático no layout normal ──
+        "lg:static lg:translate-x-0 lg:flex",
+
+        // ── Mobile: drawer por cima do conteúdo ──
+        // Posicionado fixo, cobre a tela inteira em altura
+        "fixed inset-y-0 left-0 z-40",
+        // Transição suave
+        "transition-transform duration-300 ease-in-out",
+        // Aberto → visível | Fechado → escondido para a esquerda
+        open ? "translate-x-0" : "-translate-x-full",
+      )}
+    >
+      {/* ── Cabeçalho: logo + botão fechar (mobile) ── */}
+      <div className="flex h-16 items-center justify-between border-b border-border px-4">
+        <Link href="/dashboard" className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
             <Calendar className="h-4 w-4 text-primary-foreground" />
           </div>
           <span className="text-lg font-semibold text-foreground">AgendaZap</span>
-        </div>
-      </Link>
+        </Link>
 
-      {/* Navegação principal */}
-      <nav className="flex-1 p-4">
+        {/* Só aparece no mobile */}
+        <button
+          onClick={onClose}
+          aria-label="Fechar menu"
+          className="rounded-md p-1 text-muted-foreground hover:text-foreground lg:hidden"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* ── Navegação ── */}
+      <nav className="flex-1 overflow-y-auto p-4">
         <ul className="flex flex-col gap-1">
           {navigation.map((item) => {
-            const isActive = pathname === item.href
+            const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
             return (
               <li key={item.name}>
                 <Link
                   href={item.href}
+                  onClick={onClose} // fecha o drawer ao navegar no mobile
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                     isActive
@@ -133,10 +165,11 @@ export function DashboardSidebar({
             )
           })}
 
-          {/* Item de plano separado com badge de status */}
+          {/* Item de plano com badge de status */}
           <li className="mt-2 border-t border-border pt-2">
             <Link
               href="/pricing"
+              onClick={onClose}
               className={cn(
                 "flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 pathname === "/pricing"
@@ -158,9 +191,9 @@ export function DashboardSidebar({
         </ul>
       </nav>
 
-      {/* Status da Conexão WhatsApp */}
+      {/* ── Status WhatsApp ── */}
       <div className="border-t border-border p-4">
-        <Link href="/dashboard/whatsapp">
+        <Link href="/dashboard/whatsapp" onClick={onClose}>
           <div className="flex items-center gap-3 rounded-lg bg-muted p-3 transition-colors hover:bg-muted/80">
             <div className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full",

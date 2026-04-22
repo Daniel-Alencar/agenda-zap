@@ -223,9 +223,10 @@ function NotificationBell() {
 // ── Header principal ──────────────────────────────────────────────────────────
 
 interface DashboardHeaderProps {
-  userName:  string
-  userEmail: string
-  username:  string
+  userName:    string
+  userEmail:   string
+  username:    string
+  onMenuClick: () => void
 }
 
 function getInitials(name: string) {
@@ -237,7 +238,7 @@ function getInitials(name: string) {
     .toUpperCase()
 }
 
-export function DashboardHeader({ userName, userEmail, username }: DashboardHeaderProps) {
+export function DashboardHeader({ userName, userEmail, username, onMenuClick }: DashboardHeaderProps) {
   const [isPending, startTransition] = useTransition()
 
   function handleSignOut() {
@@ -247,7 +248,7 @@ export function DashboardHeader({ userName, userEmail, username }: DashboardHead
   return (
     <header className="flex h-16 items-center justify-between border-b border-border bg-card px-6">
       {/* Botão Menu Mobile */}
-      <Button variant="ghost" size="icon" className="lg:hidden">
+      <Button variant="ghost" size="icon" className="lg:hidden" onClick={onMenuClick}>
         <Menu className="h-5 w-5" />
         <span className="sr-only">Abrir menu</span>
       </Button>

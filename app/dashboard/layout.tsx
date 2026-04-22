@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation"
-import { DashboardSidebar } from "@/components/dashboard/sidebar"
-import { DashboardHeader } from "@/components/dashboard/header"
+import { DashboardShell } from "@/components/dashboard/dashboard-shell"
 import { createClient } from "@/lib/supabase/server"
 import { prisma } from "@/lib/prisma"
 
@@ -82,26 +81,20 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <DashboardSidebar
-          whatsappConnected={user.evolutionConnected}
-          planStatus={user.planStatus}
-          trialEndsAt={user.trialEndsAt?.toISOString() ?? null}
-          planExpiresAt={user.planExpiresAt?.toISOString() ?? null}
-        />
-      <div className="flex flex-1 flex-col">
-        <DashboardHeader
-          userName={user.name}
-          userEmail={user.email}
-          username={user.username}
-        />
-        <main className="flex-1 p-6">{children}</main>
-      </div>
-    </div>
+    <DashboardShell
+      userName={user.name}
+      userEmail={user.email}
+      username={user.username}
+      whatsappConnected={user.evolutionConnected}
+      planStatus={user.planStatus}
+      trialEndsAt={user.trialEndsAt?.toISOString() ?? null}
+      planExpiresAt={user.planExpiresAt?.toISOString() ?? null}
+    >
+      {children}
+    </DashboardShell>
   )
 }
 
-// Garante username único acrescentando sufixo numérico se necessário
 async function ensureUniqueUsername(base: string): Promise<string> {
   const existing = await prisma.user.findUnique({ where: { username: base } })
   if (!existing) return base
