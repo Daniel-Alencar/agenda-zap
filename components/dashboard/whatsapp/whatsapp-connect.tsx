@@ -4,14 +4,15 @@ import { useState, useEffect, useCallback, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import {
   MessageCircle, CheckCircle, XCircle, Loader2,
-  RefreshCw, Wifi, WifiOff, Copy, ExternalLink, AlertCircle,
+  RefreshCw, Wifi, WifiOff, Copy, ExternalLink, AlertCircle, Bot,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
-import { setupWhatsApp, disconnectWhatsApp } from "@/lib/actions/whatsapp"
+import { setupWhatsApp, disconnectWhatsApp, toggleWhatsAppBot } from "@/lib/actions/whatsapp"
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ interface WhatsAppConnectProps {
   initialState: {
     instanceName: string | null
     connected: boolean
+    botActive: boolean
   }
 }
 
@@ -42,6 +44,8 @@ export function WhatsAppConnect({ initialState }: WhatsAppConnectProps) {
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError]   = useState<string | null>(null)
   const [qrExpiry, setQrExpiry] = useState<number>(0) // timestamp de expiração
+  const [botActive, setBotActive] = useState(initialState.botActive)
+  const [isTogglePending, setIsTogglePending] = useState(false)
   const [isSetupPending, startSetupTransition] = useTransition()
   const [isDisconnectPending, startDisconnectTransition] = useTransition()
 
@@ -162,6 +166,19 @@ export function WhatsAppConnect({ initialState }: WhatsAppConnectProps) {
       toast.success("WhatsApp desconectado.")
       router.refresh()
     })
+  }
+
+  async function handleToggleBot(checked: boolean) {
+    setIsTogglePending(true)
+    setBotActive(checked) // optimistic update
+    const result = await toggleWhatsAppBot(checked)
+    if (result.error) {
+      toast.error(result.error)
+      setBotActive(!checked) // rollback
+    } else {
+      toast.success(checked ? "Chatbot ativado!" : "Chatbot desativado.")
+    }
+    setIsTogglePending(false)
   }
 
   function copyWebhookUrl() {
@@ -344,6 +361,31 @@ export function WhatsAppConnect({ initialState }: WhatsAppConnectProps) {
 
         </CardContent>
       </Card>
+
+      {/* Card de controle do chatbot — só aparece quando conectado */}
+      {isConnected && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Bot className="h-5 w-5" />
+                Chatbot Automático
+              </CardTitle>
+              <Switch
+                id="bot-toggle"
+                checked={botActive}
+                onCheckedChange={handleToggleBot}
+                disabled={isTogglePending}
+              />
+            </div>
+            <CardDescription>
+              {botActive
+                ? "O chatbot está respondendo automaticamente às mensagens dos clientes."
+                : "O chatbot está pausado. Você pode usar o WhatsApp normalmente sem respostas automáticas."}
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
 
       {/* Card de configuração do webhook */}
       {/* 

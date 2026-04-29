@@ -12,7 +12,7 @@ export default async function WhatsAppPage() {
 
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { evolutionInstanceName: true, evolutionConnected: true },
+    select: { evolutionInstanceName: true, evolutionConnected: true, whatsappBotActive: true },
   })
 
   return (
@@ -21,6 +21,7 @@ export default async function WhatsAppPage() {
         initialState={{
           instanceName: dbUser?.evolutionInstanceName ?? null,
           connected: dbUser?.evolutionConnected ?? false,
+          botActive: dbUser?.whatsappBotActive ?? true,
         }}
       />
     </div>

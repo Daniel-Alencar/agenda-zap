@@ -213,10 +213,16 @@ async function processMessage(instanceName: string, msgData: MessageData): Promi
   // instância está ativa na Evolution API.
   const user = await prisma.user.findFirst({
     where: { evolutionInstanceName: instanceName },
-    select: { id: true, name: true, username: true },
+    select: { id: true, name: true, username: true, whatsappBotActive: true },
   })
   if (!user) {
     console.warn(`[Webhook] Instância "${instanceName}" sem lojista vinculado`)
+    return
+  }
+
+  // Se o bot estiver desativado, ignora a mensagem silenciosamente
+  if (!user.whatsappBotActive) {
+    console.log(`[Webhook] Bot desativado para "${instanceName}" — ignorando mensagem`)
     return
   }
 

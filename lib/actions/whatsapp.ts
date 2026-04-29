@@ -99,3 +99,24 @@ export async function disconnectWhatsApp() {
     return { error: "Erro ao desconectar. Tente novamente." }
   }
 }
+
+// ── TOGGLE BOT ────────────────────────────────────────────────────────────────
+// Liga ou desliga o chatbot do WhatsApp sem desconectar a instância.
+
+export async function toggleWhatsAppBot(active: boolean) {
+  try {
+    const userId = await getAuthUserId()
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { whatsappBotActive: active },
+    })
+
+    revalidatePath("/dashboard/whatsapp")
+
+    return { success: true, active }
+  } catch (err) {
+    console.error("[WhatsApp] toggleWhatsAppBot:", err)
+    return { error: "Erro ao alterar estado do bot." }
+  }
+}
