@@ -12,8 +12,10 @@ interface DashboardShellProps {
   username:          string
   whatsappConnected: boolean
   planStatus?:       "TRIAL" | "ACTIVE" | "EXPIRED"
+  planType?:         "MONTHLY" | "ANNUAL" | null
   trialEndsAt?:      string | null
   planExpiresAt?:    string | null
+  planCancelledAt?:  string | null
 }
 
 export function DashboardShell({
@@ -23,8 +25,10 @@ export function DashboardShell({
   username,
   whatsappConnected,
   planStatus,
+  planType,
   trialEndsAt,
   planExpiresAt,
+  planCancelledAt,
 }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
@@ -62,8 +66,10 @@ export function DashboardShell({
         onClose={() => setSidebarOpen(false)}
         whatsappConnected={whatsappConnected}
         planStatus={planStatus}
+        planType={planType}
         trialEndsAt={trialEndsAt}
         planExpiresAt={planExpiresAt}
+        planCancelledAt={planCancelledAt}
       />
 
       {/* Conteúdo principal */}

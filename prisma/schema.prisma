@@ -37,7 +37,8 @@ model User {
   planStatus    PlanStatus @default(TRIAL)
   planType      PlanType?              // null enquanto em trial
   trialEndsAt   DateTime               // definido no cadastro: now + 7 dias
-  planExpiresAt DateTime?              // definido ao ativar plano pago
+  planExpiresAt   DateTime?              // definido ao ativar plano pago
+  planCancelledAt DateTime?              // data em que o usuário solicitou cancelamento
 
   // Mercado Pago
   mpCustomerId    String?  // external_reference usado nas preferências

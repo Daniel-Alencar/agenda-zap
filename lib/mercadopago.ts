@@ -17,14 +17,14 @@ export const mpClient = new MercadoPagoConfig({
 
 export const PLAN_CONFIG = {
   MONTHLY: {
-    title:       "AgendaZap — Plano Mensal",
-    unit_price:  29.00,
-    months:      1,
+    title: "AgendaZap — Plano Mensal",
+    unit_price: 29.00,
+    months: 1,
   },
   ANNUAL: {
-    title:       "AgendaZap — Plano Anual",
-    unit_price:  300.00,  // 25 × 12
-    months:      12,
+    title: "AgendaZap — Plano Anual",
+    unit_price: 300.00,  // 25 × 12
+    months: 12,
   },
 } as const
 
@@ -35,22 +35,22 @@ export async function createPaymentPreference({
   planType,
   userEmail,
 }: {
-  userId:    string
-  planType:  "MONTHLY" | "ANNUAL"
+  userId: string
+  planType: "MONTHLY" | "ANNUAL"
   userEmail: string
 }) {
-  const plan    = PLAN_CONFIG[planType]
-  const appUrl  = process.env.NEXT_PUBLIC_APP_URL!
+  const plan = PLAN_CONFIG[planType]
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL!
   const preference = new Preference(mpClient)
 
   const response = await preference.create({
     body: {
       items: [
         {
-          id:          planType,
-          title:       plan.title,
-          quantity:    1,
-          unit_price:  plan.unit_price,
+          id: planType,
+          title: plan.title,
+          quantity: 1,
+          unit_price: plan.unit_price,
           currency_id: "BRL",
         },
       ],
@@ -65,8 +65,8 @@ export async function createPaymentPreference({
         // pending também vai para success com mensagem adequada
         pending: `${appUrl}/payment/success`,
       },
-      auto_return:         "approved",
-      notification_url:    `${appUrl}/api/payment/webhook`,
+      auto_return: "approved",
+      notification_url: `${appUrl}/api/payment/webhook`,
       statement_descriptor: "AGENDAZAP",
     },
   })

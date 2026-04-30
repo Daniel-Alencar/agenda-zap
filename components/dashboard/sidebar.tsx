@@ -30,8 +30,10 @@ interface DashboardSidebarProps {
   onClose?:          () => void
   whatsappConnected?: boolean
   planStatus?:       "TRIAL" | "ACTIVE" | "EXPIRED"
+  planType?:         "MONTHLY" | "ANNUAL" | null
   trialEndsAt?:      string | null
   planExpiresAt?:    string | null
+  planCancelledAt?:  string | null
 }
 
 // ── Badge de status do plano ──────────────────────────────────────────────────
@@ -40,7 +42,8 @@ function PlanBadge({
   planStatus,
   trialEndsAt,
   planExpiresAt,
-}: Pick<DashboardSidebarProps, "planStatus" | "trialEndsAt" | "planExpiresAt">) {
+  planCancelledAt,
+}: Pick<DashboardSidebarProps, "planStatus" | "trialEndsAt" | "planExpiresAt" | "planCancelledAt">) {
   if (!planStatus) return null
 
   const now = new Date()
@@ -54,6 +57,14 @@ function PlanBadge({
   }
 
   if (planStatus === "ACTIVE") {
+    // Plano cancelado mas ainda ativo
+    if (planCancelledAt) {
+      return (
+        <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+          Cancelando
+        </span>
+      )
+    }
     const exp      = planExpiresAt ? new Date(planExpiresAt) : null
     const expiring = exp !== null && (exp.getTime() - now.getTime()) < 7 * 24 * 60 * 60 * 1000
     return (
@@ -99,8 +110,10 @@ export function DashboardSidebar({
   onClose,
   whatsappConnected = false,
   planStatus,
+  planType,
   trialEndsAt,
   planExpiresAt,
+  planCancelledAt,
 }: DashboardSidebarProps) {
   const pathname = usePathname()
 
@@ -168,11 +181,11 @@ export function DashboardSidebar({
           {/* Item de plano com badge de status */}
           <li className="mt-2 border-t border-border pt-2">
             <Link
-              href="/pricing"
+              href={planStatus === "ACTIVE" ? "/dashboard/subscription" : "/pricing"}
               onClick={onClose}
               className={cn(
                 "flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                pathname === "/pricing"
+                (pathname === "/pricing" || pathname === "/dashboard/subscription")
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
@@ -185,6 +198,7 @@ export function DashboardSidebar({
                 planStatus={planStatus}
                 trialEndsAt={trialEndsAt}
                 planExpiresAt={planExpiresAt}
+                planCancelledAt={planCancelledAt}
               />
             </Link>
           </li>

@@ -26,8 +26,10 @@ export default async function DashboardLayout({
       username:          true,
       evolutionConnected: true,
       planStatus:        true,
+      planType:          true,
       trialEndsAt:       true,
       planExpiresAt:     true,
+      planCancelledAt:   true,
     },
   })
 
@@ -60,8 +62,10 @@ export default async function DashboardLayout({
         username:          true,
         evolutionConnected: true,
         planStatus:        true,
+        planType:          true,
         trialEndsAt:       true,
         planExpiresAt:     true,
+        planCancelledAt:   true,
       },
     })
   }
@@ -87,8 +91,10 @@ export default async function DashboardLayout({
       username={user.username}
       whatsappConnected={user.evolutionConnected}
       planStatus={user.planStatus}
+      planType={user.planType}
       trialEndsAt={user.trialEndsAt?.toISOString() ?? null}
       planExpiresAt={user.planExpiresAt?.toISOString() ?? null}
+      planCancelledAt={user.planCancelledAt?.toISOString() ?? null}
     >
       {children}
     </DashboardShell>
